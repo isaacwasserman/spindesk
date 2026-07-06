@@ -96,12 +96,13 @@ function tagToCond(node: TagToken): FilterNode {
 			}
 			return { type: "cond", field: spec.column, op: "eq", value: term };
 		case "tag":
-			// tags stored space-delimited (" billing urgent "); match a token.
+			// tags stored as a JSON array (["billing","urgent"]); match a
+			// quoted token so `bill` can't collide with `billing`.
 			return {
 				type: "cond",
 				field: spec.column,
 				op: "contains",
-				value: ` ${term} `,
+				value: JSON.stringify(term),
 			};
 		case "archived": {
 			const truthy = term === "true" || term === "1";

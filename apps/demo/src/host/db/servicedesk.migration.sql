@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS servicedesk_tickets (
   description TEXT NOT NULL,
   status TEXT NOT NULL,
   assignee_id TEXT,
-  tags TEXT,
+  tags TEXT, -- JSON array of tags, e.g. ["billing","urgent"]
   archived_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
