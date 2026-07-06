@@ -2,11 +2,21 @@
   "name": "spindesk",
   "private": true,
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/isaacwasserman/spindesk.git"
+  },
   "workspaces": ["packages/*", "apps/*"],
   "scripts": {
-    "dev": "bun run --cwd apps/demo dev"
+    "dev": "bun run --cwd apps/demo dev",
+    "build": "bun run --cwd packages/core build",
+    "test": "bun run --filter demo test",
+    "typecheck": "bun run --cwd packages/core typecheck",
+    "lint": "bun run --cwd packages/core lint",
+    "format": "bun run --cwd packages/core format"
   },
   "devDependencies": {
+    "@changesets/cli": "^2.30.0",
     "@types/bun": "latest"
   },
   "peerDependencies": {

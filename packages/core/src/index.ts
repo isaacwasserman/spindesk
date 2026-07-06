@@ -8,7 +8,7 @@
  * host provides the UI and creates the service's tables.
  */
 import type { Middleware } from "better-call";
-import { createService, type EmbeddableService } from "futonic";
+import { type EmbeddableService, createService } from "futonic";
 import { createAuthMiddleware } from "./auth-middleware";
 import { createServiceDeskEndpoints } from "./endpoints";
 import { serviceDeskSchema } from "./schema";

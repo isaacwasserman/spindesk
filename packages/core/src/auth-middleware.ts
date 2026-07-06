@@ -26,9 +26,7 @@ export async function resolveIdentity(
 
 	let row = await svc.db.users.findOne([{ field: "id", value: userId }]);
 	if (!row) {
-		const role: Role = config.agentUserIds?.includes(userId)
-			? "agent"
-			: "user";
+		const role: Role = config.agentUserIds?.includes(userId) ? "agent" : "user";
 		row = await svc.db.users.create({
 			id: userId,
 			role,
@@ -48,9 +46,8 @@ export async function resolveIdentity(
  */
 export function createAuthMiddleware() {
 	return createMiddleware(async (ctx) => {
-		const serviceCtx = (
-			ctx as unknown as { context: { serviceCtx: SvcCtx } }
-		).context.serviceCtx;
+		const serviceCtx = (ctx as unknown as { context: { serviceCtx: SvcCtx } })
+			.context.serviceCtx;
 		const headers: Headers =
 			(ctx.headers as Headers | undefined) ??
 			(ctx.request as Request | undefined)?.headers ??

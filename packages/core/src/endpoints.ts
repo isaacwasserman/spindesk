@@ -1,4 +1,4 @@
-import { APIError, createEndpoint, type Middleware } from "better-call";
+import { APIError, type Middleware, createEndpoint } from "better-call";
 import { z } from "zod";
 import { requireAgent } from "./auth-middleware";
 import { toCamel, toCamelList } from "./case";
@@ -44,7 +44,9 @@ function serializeTags(tags: string[]): string | null {
 	return cleaned.length ? ` ${cleaned.join(" ")} ` : null;
 }
 function parseTags(value: unknown): string[] {
-	return typeof value === "string" ? value.trim().split(/\s+/).filter(Boolean) : [];
+	return typeof value === "string"
+		? value.trim().split(/\s+/).filter(Boolean)
+		: [];
 }
 /** Validate tags against the configured vocabulary (if any); 400 on unknown. */
 function validateTags(svc: SvcCtx, tags: string[]): void {
@@ -61,7 +63,10 @@ function validateTags(svc: SvcCtx, tags: string[]): void {
 async function enrichTickets(svc: SvcCtx, tickets: Row[]): Promise<Row[]> {
 	const names = await resolveUserNames(
 		authOf(svc),
-		tickets.flatMap((t) => [t.user_id as string, t.assignee_id as string | null]),
+		tickets.flatMap((t) => [
+			t.user_id as string,
+			t.assignee_id as string | null,
+		]),
 	);
 	return tickets.map((t) => ({
 		...t,
@@ -133,8 +138,7 @@ export function createServiceDeskEndpoints(use: Middleware[]) {
 			}),
 		},
 		async (ctx) => {
-			const { serviceCtx: svc, serviceDesk } = (ctx as unknown as Ctx)
-				.context;
+			const { serviceCtx: svc, serviceDesk } = (ctx as unknown as Ctx).context;
 			const tags = ctx.body.tags ?? [];
 			validateTags(svc, tags);
 			const now = new Date().toISOString();
@@ -159,9 +163,8 @@ export function createServiceDeskEndpoints(use: Middleware[]) {
 		"/tickets",
 		{ method: "GET", use },
 		async (ctx) => {
-			const { serviceCtx: svc, serviceDesk } = (ctx as unknown as Ctx)
-				.context;
-			const url = new URL(ctx.request!.url);
+			const { serviceCtx: svc, serviceDesk } = (ctx as unknown as Ctx).context;
+			const url = new URL((ctx.request as Request).url);
 			const q = url.searchParams.get("q") ?? "";
 
 			// Pagination.
@@ -261,9 +264,7 @@ export function createServiceDeskEndpoints(use: Middleware[]) {
 				data.tags = serializeTags(ctx.body.tags);
 			}
 			if (ctx.body.archived !== undefined) {
-				data.archived_at = ctx.body.archived
-					? new Date().toISOString()
-					: null;
+				data.archived_at = ctx.body.archived ? new Date().toISOString() : null;
 			}
 
 			if (ctx.body.status !== undefined) {
@@ -361,10 +362,9 @@ export function createServiceDeskEndpoints(use: Middleware[]) {
 				created_at: now,
 			});
 			// Bump ticket activity timestamp.
-			await svc.db.tickets.update(
-				[{ field: "id", value: id }],
-				{ updated_at: now },
-			);
+			await svc.db.tickets.update([{ field: "id", value: id }], {
+				updated_at: now,
+			});
 			return toCamel((await enrichComments(svc, [comment]))[0] as Row);
 		},
 	);
@@ -378,15 +378,12 @@ export function createServiceDeskEndpoints(use: Middleware[]) {
 			body: z.object({ role: z.enum(["user", "agent"]) }),
 		},
 		async (ctx) => {
-			const { serviceCtx: svc, serviceDesk } = (ctx as unknown as Ctx)
-				.context;
+			const { serviceCtx: svc, serviceDesk } = (ctx as unknown as Ctx).context;
 			requireAgent(serviceDesk);
 			const { id } = ctx.params as { id: string };
 			const role = ctx.body.role as Role;
 
-			const existing = await svc.db.users.findOne([
-				{ field: "id", value: id },
-			]);
+			const existing = await svc.db.users.findOne([{ field: "id", value: id }]);
 			const row = existing
 				? await svc.db.users.update([{ field: "id", value: id }], {
 						role,

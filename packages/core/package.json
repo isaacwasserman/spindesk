@@ -1,18 +1,43 @@
 {
   "name": "@spindesk/core",
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "description": "Embeddable service desk API built on futonic",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/isaacwasserman/spindesk.git",
+    "directory": "packages/core"
+  },
   "type": "module",
-  "module": "src/index.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
   },
   "scripts": {
-    "test": "bun test"
+    "build": "bun run scripts/build.ts",
+    "dev": "bun --watch src/index.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check src/",
+    "format": "biome format --write src/"
   },
   "dependencies": {
     "better-call": "^1.3.7",
     "futonic": "0.1.1-canary.9e309ac",
     "liqe": "^3.8.7",
     "zod": "^4.4.3"
-  }
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@types/bun": "latest",
+    "typescript": "^5.7.0"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "files": ["dist"],
+  "license": "MIT"
 }

@@ -1,5 +1,5 @@
 import { APIError } from "better-call";
-import { parse } from "liqe";
+import { type LiqeQuery, type TagToken, parse } from "liqe";
 import { TICKET_STATUS } from "./types";
 
 /**
@@ -55,13 +55,14 @@ function bad(message: string): never {
 	throw new APIError("BAD_REQUEST", { message });
 }
 
-function tagToCond(node: any): FilterNode {
-	const value = node.expression?.value;
+function tagToCond(node: TagToken): FilterNode {
+	const expr = node.expression;
+	const value = "value" in expr ? expr.value : undefined;
 	const opStr: string = node.operator?.operator ?? ":";
 	const term = value === undefined || value === null ? "" : String(value);
 
 	// Bare term (no field): match subject OR description.
-	if (node.field?.type !== "Field") {
+	if (node.field.type !== "Field") {
 		return {
 			type: "or",
 			nodes: [
@@ -113,8 +114,8 @@ function tagToCond(node: any): FilterNode {
 	}
 }
 
-function walk(node: any): FilterNode {
-	switch (node?.type) {
+function walk(node: LiqeQuery): FilterNode {
+	switch (node.type) {
 		case "LogicalExpression":
 			return {
 				type: node.operator?.operator === "OR" ? "or" : "and",
@@ -129,7 +130,9 @@ function walk(node: any): FilterNode {
 		case "EmptyExpression":
 			return { type: "and", nodes: [] };
 		default:
-			bad(`Unsupported query expression: ${node?.type ?? "unknown"}`);
+			bad(
+				`Unsupported query expression: ${(node as { type?: string }).type ?? "unknown"}`,
+			);
 	}
 }
 
@@ -158,7 +161,7 @@ function freeTextFilter(text: string): FilterNode {
 export function parseLuceneToFilter(query: string): FilterNode | null {
 	const trimmed = query.trim();
 	if (!trimmed) return null;
-	let ast: unknown;
+	let ast: LiqeQuery;
 	try {
 		ast = parse(trimmed);
 	} catch {
