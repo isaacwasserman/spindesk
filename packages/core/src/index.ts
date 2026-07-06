@@ -12,6 +12,7 @@ import { createService, type EmbeddableService } from "futonic";
 import { createAuthMiddleware } from "./auth-middleware";
 import { createServiceDeskEndpoints } from "./endpoints";
 import { serviceDeskSchema } from "./schema";
+import type { SvcCtx } from "./types";
 
 /**
  * The service definition. `endpoints` is a factory: futonic passes its own
@@ -29,7 +30,27 @@ export const serviceDeskDefinition = {
 		]),
 
 	async onInit(ctx) {
-		ctx.logger.info("Service desk initialized");
+		// Physically promote configured agents in the sidecar table (create the
+		// row if the user hasn't signed in yet, or upgrade an existing "user").
+		// This persists, so once promoted these ids can be dropped from config.
+		const agentIds =
+			(ctx.config as { agentUserIds?: string[] }).agentUserIds ?? [];
+		const users = (ctx.db as SvcCtx["db"]).users;
+		const now = new Date().toISOString();
+		let promoted = 0;
+		for (const id of agentIds) {
+			const existing = await users.findOne([{ field: "id", value: id }]);
+			if (!existing) {
+				await users.create({ id, role: "agent", created_at: now });
+				promoted++;
+			} else if (existing.role !== "agent") {
+				await users.update([{ field: "id", value: id }], { role: "agent" });
+				promoted++;
+			}
+		}
+		ctx.logger.info(
+			`Service desk initialized${promoted ? ` — promoted ${promoted} configured agent(s)` : ""}`,
+		);
 	},
 } satisfies EmbeddableService;
 

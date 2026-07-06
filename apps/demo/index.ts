@@ -12,7 +12,7 @@ import { createApp } from "./src/host/server";
 const app = await createApp({
 	dbPath: process.env.DB_PATH ?? "servicedesk.db",
 	baseURL: process.env.BASE_URL ?? "http://localhost:3000",
-	agentUserIds: (process.env.AGENT_USER_IDS ?? "WL70qbh7E8uLxF2zXcoJ5p9OWhzOoHDn")
+	agentUserIds: (process.env.AGENT_USER_IDS ?? "cvhLAduqLp0UFcNIVVIqLqZFHR0mwjLB")
 		.split(",")
 		.map((s) => s.trim())
 		.filter(Boolean),
