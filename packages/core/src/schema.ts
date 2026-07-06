@@ -19,7 +19,7 @@ export const serviceDeskSchema = {
 					required: true,
 					enum: ["user", "agent"],
 				},
-				created_at: { type: "string", required: true },
+				created_at: { type: "date", required: true },
 			},
 		},
 		tickets: {
@@ -34,14 +34,15 @@ export const serviceDeskSchema = {
 					enum: ["open", "pending", "resolved", "closed"],
 				},
 				assignee_id: { type: "string" },
-				// Space-delimited tag list (e.g. " billing urgent "); kept
+				// JSON array of tags (e.g. ["billing","urgent"]); kept
 				// denormalized so Lucene filters map to a single column.
-				tags: { type: "string" },
+				// Stored as JSON text on SQLite/MySQL, jsonb on Postgres.
+				tags: { type: "json" },
 				// Set when the author archives the ticket; hides it from
 				// default listings.
-				archived_at: { type: "string" },
-				created_at: { type: "string", required: true },
-				updated_at: { type: "string", required: true },
+				archived_at: { type: "date" },
+				created_at: { type: "date", required: true },
+				updated_at: { type: "date", required: true },
 			},
 		},
 		// Ticket file attachments. `data` holds the raw bytes (BYTEA in
@@ -63,7 +64,7 @@ export const serviceDeskSchema = {
 				size: { type: "number", required: true },
 				data: { type: "binary", required: true },
 				uploaded_by: { type: "string", required: true },
-				created_at: { type: "string", required: true },
+				created_at: { type: "date", required: true },
 			},
 		},
 		comments: {
@@ -92,7 +93,7 @@ export const serviceDeskSchema = {
 				// Snapshot of the author's role at write time, for display.
 				author_role: { type: "string", required: true },
 				body: { type: "string", required: true },
-				created_at: { type: "string", required: true },
+				created_at: { type: "date", required: true },
 			},
 		},
 	},

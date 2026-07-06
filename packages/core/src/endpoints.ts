@@ -38,15 +38,19 @@ const ATTACHMENT_META = [
 	"created_at",
 ];
 
-/** Tags are stored space-delimited with surrounding spaces: " billing urgent ". */
+/** Tags are stored as a JSON array of unique tokens: ["billing","urgent"]. */
 function serializeTags(tags: string[]): string | null {
 	const cleaned = [...new Set(tags.map((t) => t.trim()).filter(Boolean))];
-	return cleaned.length ? ` ${cleaned.join(" ")} ` : null;
+	return cleaned.length ? JSON.stringify(cleaned) : null;
 }
 function parseTags(value: unknown): string[] {
-	return typeof value === "string"
-		? value.trim().split(/\s+/).filter(Boolean)
-		: [];
+	if (typeof value !== "string" || !value) return [];
+	try {
+		const parsed = JSON.parse(value);
+		return Array.isArray(parsed) ? parsed.filter((t) => typeof t === "string") : [];
+	} catch {
+		return [];
+	}
 }
 /** Validate tags against the configured vocabulary (if any); 400 on unknown. */
 function validateTags(svc: SvcCtx, tags: string[]): void {
