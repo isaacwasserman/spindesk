@@ -1,0 +1,191 @@
+:root {
+	font-family: system-ui, sans-serif;
+	line-height: 1.4;
+	color: #1a1a1a;
+}
+* {
+	box-sizing: border-box;
+}
+body {
+	margin: 0;
+	background: #f5f5f5;
+}
+.app {
+	max-width: 780px;
+	margin: 0 auto;
+	padding: 1rem;
+}
+header.bar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 0.5rem;
+	padding: 0.5rem 0 1rem;
+	border-bottom: 1px solid #ddd;
+	margin-bottom: 1rem;
+}
+h1 {
+	font-size: 1.25rem;
+	margin: 0;
+}
+.card {
+	background: #fff;
+	border: 1px solid #ddd;
+	border-radius: 6px;
+	padding: 0.75rem 1rem;
+	margin-bottom: 0.75rem;
+}
+.row {
+	display: flex;
+	gap: 0.5rem;
+	align-items: center;
+	flex-wrap: wrap;
+}
+.spread {
+	justify-content: space-between;
+}
+button {
+	font: inherit;
+	padding: 0.35rem 0.7rem;
+	border: 1px solid #888;
+	border-radius: 4px;
+	background: #fff;
+	cursor: pointer;
+}
+button.primary {
+	background: #1a1a1a;
+	color: #fff;
+	border-color: #1a1a1a;
+}
+button:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+input,
+textarea,
+select {
+	font: inherit;
+	padding: 0.4rem;
+	border: 1px solid #bbb;
+	border-radius: 4px;
+	width: 100%;
+}
+label {
+	display: block;
+	font-size: 0.8rem;
+	color: #555;
+	margin: 0.4rem 0 0.15rem;
+}
+.badge {
+	font-size: 0.7rem;
+	text-transform: uppercase;
+	letter-spacing: 0.03em;
+	padding: 0.1rem 0.4rem;
+	border-radius: 10px;
+	background: #eee;
+	border: 1px solid #ccc;
+}
+.badge.agent {
+	background: #e5f0ff;
+	border-color: #9cc0ff;
+}
+.status {
+	font-size: 0.75rem;
+	padding: 0.1rem 0.45rem;
+	border-radius: 10px;
+	border: 1px solid #ccc;
+}
+.status.open {
+	background: #e6f7e6;
+}
+.status.pending {
+	background: #fff4d6;
+}
+.status.resolved {
+	background: #e5f0ff;
+}
+.status.closed {
+	background: #eee;
+	color: #666;
+}
+.muted {
+	color: #777;
+	font-size: 0.8rem;
+}
+.err {
+	color: #b00020;
+	font-size: 0.85rem;
+}
+.link {
+	background: none;
+	border: none;
+	color: #0645ad;
+	padding: 0;
+	cursor: pointer;
+	text-decoration: underline;
+}
+.comment {
+	border-left: 3px solid #ddd;
+	padding: 0.25rem 0.6rem;
+	margin: 0.4rem 0;
+}
+.comment.agent {
+	border-left-color: #9cc0ff;
+}
+.combo {
+	position: relative;
+	flex: 1;
+}
+/* Custom React autocomplete dropdown (driven by CodeMirror's completion state). */
+.cmp {
+	position: absolute;
+	z-index: 30;
+	left: 0;
+	right: 0;
+	top: calc(100% + 4px);
+	margin: 0;
+	padding: 4px;
+	list-style: none;
+	background: #fff;
+	border: 1px solid #d6d6e4;
+	border-radius: 8px;
+	max-height: 16rem;
+	overflow: auto;
+	box-shadow: 0 10px 28px rgba(23, 23, 43, 0.16);
+	font-size: 0.85rem;
+}
+.cmp li {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 9px;
+	border-radius: 6px;
+	cursor: pointer;
+	color: #23233a;
+}
+.cmp li:hover {
+	background: #f2f0fb;
+}
+.cmp li.sel {
+	background: #6d28d9;
+	color: #fff;
+}
+.cmp-ico {
+	width: 1.2em;
+	text-align: center;
+	opacity: 0.8;
+	font-size: 0.9em;
+}
+.cmp-label {
+	flex: 1;
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.cmp-detail {
+	margin-left: auto;
+	padding-left: 10px;
+	font-size: 0.72rem;
+	color: #9a9ab0;
+}
+.cmp li.sel .cmp-detail {
+	color: rgba(255, 255, 255, 0.85);
+}
