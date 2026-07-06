@@ -30,7 +30,7 @@ service-desk-specific bits the host's auth doesn't know about.
 | `description` | TEXT | Required                                                 |
 | `status`      | TEXT | Required. One of `open`, `pending`, `resolved`, `closed` |
 | `assignee_id` | TEXT | Nullable                                                 |
-| `tags`        | TEXT | Nullable. Space-delimited tag list (e.g. `" billing urgent "`), denormalized so Lucene filters map to one column |
+| `tags`        | TEXT | Nullable. JSON array of tags (e.g. `["billing","urgent"]`), denormalized so Lucene filters map to one column |
 | `archived_at` | TEXT | Nullable. Set when the author archives; hides from default listings |
 | `created_at`  | TEXT | Required                                                 |
 | `updated_at`  | TEXT | Required                                                 |
