@@ -23,8 +23,11 @@ export async function resolveIdentity(
 		});
 	}
 	const userId = session.user.id;
+	const email = session.user.email ?? null;
 
-	const isConfiguredAgent = config.agentUserIds?.includes(userId) ?? false;
+	const isConfiguredAgent =
+		(config.agentUserIds?.includes(userId) ?? false) ||
+		(email !== null && (config.agentEmails?.includes(email) ?? false));
 
 	let row = await svc.db.users.findOne([{ field: "id", value: userId }]);
 	if (!row) {

@@ -21,7 +21,7 @@ export interface AuthLike {
 	api: {
 		getSession(opts: {
 			headers: Headers;
-		}): Promise<{ user: { id: string } } | null>;
+		}): Promise<{ user: { id: string; email?: string | null } } | null>;
 	};
 	$context: Promise<{
 		adapter: {
@@ -47,6 +47,8 @@ export interface ServiceDeskConfig {
 	auth: AuthLike;
 	/** better-auth user ids seeded with the "agent" role on first sight. */
 	agentUserIds?: string[];
+	/** better-auth user emails seeded with the "agent" role on first sight. */
+	agentEmails?: string[];
 	/** Allowed tag vocabulary; ticket tags are validated against this. */
 	availableTags?: string[];
 	/** Max attachment size in bytes (default 5 MiB). */
