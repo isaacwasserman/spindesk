@@ -39,7 +39,7 @@ export interface AuthLike {
 }
 
 /**
- * Runtime configuration the host supplies via `servicedesk({ mount, config })`.
+ * Runtime configuration the host supplies via `servicedesk({ mount, database, config })`.
  * It surfaces on `serviceCtx.config`.
  */
 export interface ServiceDeskConfig {

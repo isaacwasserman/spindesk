@@ -47,7 +47,9 @@ function parseTags(value: unknown): string[] {
 	if (typeof value !== "string" || !value) return [];
 	try {
 		const parsed = JSON.parse(value);
-		return Array.isArray(parsed) ? parsed.filter((t) => typeof t === "string") : [];
+		return Array.isArray(parsed)
+			? parsed.filter((t) => typeof t === "string")
+			: [];
 	} catch {
 		return [];
 	}

@@ -54,7 +54,17 @@ export const serviceDeskDefinition = {
 	},
 } satisfies EmbeddableService;
 
-export const servicedesk = createService(serviceDeskDefinition);
+const createServiceDesk = createService(serviceDeskDefinition);
+
+/**
+ * Config for the service factory. futonic types `database` as optional (some
+ * services declare no schema), but this service always opens a database, so we
+ * require it here.
+ */
+export type ServiceDeskArgs = Parameters<typeof createServiceDesk>[0] &
+	Required<Pick<Parameters<typeof createServiceDesk>[0], "database">>;
+
+export const servicedesk = (args: ServiceDeskArgs) => createServiceDesk(args);
 
 /** Router type for the type-safe futonic/better-call client. */
 export type ServiceDeskRouter = ReturnType<typeof createServiceDeskEndpoints>;
