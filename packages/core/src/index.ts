@@ -1,17 +1,17 @@
 /**
  * servicedesk — an embeddable futonic service.
  *
- * A host application installs this and calls the factory with a mount path, a
- * database driver, and a better-auth instance (via `config`). The returned
- * RunnableService opens its own database, builds its own router, and exposes
- * `init()` / `handler(request)` / `shutdown()`. The service is API-only; the
+ * A host application installs this and calls the factory with a database driver
+ * and a better-auth instance (via `config`). The returned RunnableService opens
+ * its own database and exposes `createHandler({ baseURL, mountPath })`, which
+ * builds the router and returns a request handler. The service is API-only; the
  * host provides the UI and creates the service's tables.
  */
 import type { Middleware } from "better-call";
 import { type EmbeddableService, createService } from "futonic";
 import { createAuthMiddleware } from "./auth-middleware";
 import { createServiceDeskEndpoints } from "./endpoints";
-import { serviceDeskSchema } from "./schema";
+import { serviceDeskId, serviceDeskSchema } from "./schema";
 
 /**
  * The service definition. `endpoints` is a factory: futonic passes its own
@@ -19,7 +19,7 @@ import { serviceDeskSchema } from "./schema";
  * (which reads that context) so every endpoint authenticates.
  */
 export const serviceDeskDefinition = {
-	id: "servicedesk",
+	id: serviceDeskId,
 	version: "0.1.0",
 	dbSchema: serviceDeskSchema,
 	endpoints: (use: Middleware[]) =>
@@ -44,6 +44,6 @@ export const servicedesk = (args: ServiceDeskArgs) => createServiceDesk(args);
 /** Router type for the type-safe futonic/better-call client. */
 export type ServiceDeskRouter = ReturnType<typeof createServiceDeskEndpoints>;
 
-export { serviceDeskSchema } from "./schema";
+export { serviceDeskId, serviceDeskSchema } from "./schema";
 export type { ServiceDeskSchema } from "./schema";
 export type { Role, ServiceDeskConfig, ServiceDeskIdentity } from "./types";

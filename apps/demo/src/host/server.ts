@@ -5,7 +5,6 @@
  */
 import { Database } from "bun:sqlite";
 import { getMigrations } from "better-auth/db/migration";
-import type { RunnableService } from "futonic";
 import { servicedesk } from "@spindesk/core";
 import { type Auth, createAuth } from "./auth";
 
@@ -70,7 +69,7 @@ export interface CreateAppOptions {
 }
 
 export interface App {
-	service: RunnableService;
+	service: ReturnType<typeof servicedesk>;
 	auth: Auth;
 	mount: string;
 	/** Handle a request: routes /api/auth/* to better-auth, mount/* to the service. */
@@ -100,21 +99,24 @@ export async function createApp(opts: CreateAppOptions = {}): Promise<App> {
 
 	// The service opens its own Kysely instance from `database`; hand it the
 	// wrapped connection so SqliteDialect gets reader detection. It shares the
-	// host's connection, so we (not it) close the db on shutdown.
+	// host's connection, so we (not it) close the db on shutdown. `mount` and
+	// `baseURL` are supplied to createHandler, which builds the router.
 	const service = servicedesk({
-		mount,
 		database: db,
-		baseURL,
 		config: { auth, agentUserIds, availableTags },
-		destroyDatabaseOnShutdown: false,
 	});
-	await service.init();
+	const handler = await service.createHandler({ baseURL, mountPath: mount });
 
 	async function fetch(request: Request): Promise<Response> {
-		const { pathname } = new URL(request.url);
+		const url = new URL(request.url);
+		const { pathname } = url;
 		if (pathname.startsWith("/api/auth")) return auth.handler(request);
-		if (pathname === mount || pathname.startsWith(`${mount}/`))
-			return service.handler(request);
+		if (pathname === mount || pathname.startsWith(`${mount}/`)) {
+			// The service router registers un-prefixed paths (e.g. "/tickets");
+			// mountPath is context-only, so strip it before dispatching.
+			url.pathname = pathname.slice(mount.length) || "/";
+			return handler(new Request(url, request));
+		}
 		return new Response(JSON.stringify({ error: "Not found" }), {
 			status: 404,
 			headers: { "Content-Type": "application/json" },
@@ -127,7 +129,6 @@ export async function createApp(opts: CreateAppOptions = {}): Promise<App> {
 		mount,
 		fetch,
 		async close() {
-			await service.shutdown();
 			inner.close();
 		},
 	};

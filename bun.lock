@@ -24,7 +24,6 @@
         "@lezer/highlight": "^1.2.3",
         "@spindesk/core": "workspace:*",
         "better-auth": "^1.6.23",
-        "futonic": "0.1.1-canary.9e309ac",
         "liqe": "^3.8.7",
         "react": "^19.2.7",
         "react-dom": "^19.2.7",
@@ -41,18 +40,23 @@
       "version": "0.1.0",
       "dependencies": {
         "better-call": "^1.3.7",
-        "futonic": "0.1.1-canary.9e309ac",
+        "futonic": "0.1.1-canary.55aeaaa",
         "liqe": "^3.8.7",
         "zod": "^4.4.3",
       },
       "devDependencies": {
         "@biomejs/biome": "^1.9.4",
         "@types/bun": "latest",
+        "drizzle-orm": "^0.45.2",
         "typescript": "^5.7.0",
       },
       "peerDependencies": {
+        "drizzle-orm": ">=0.30.0",
         "typescript": "^5",
       },
+      "optionalPeers": [
+        "drizzle-orm",
+      ],
     },
   },
   "packages": {
@@ -222,6 +226,8 @@
 
     "discontinuous-range": ["discontinuous-range@1.0.0", "", {}, "sha512-c68LpLbO+7kP/b1Hr1qs8/BJ09F5khZGTxqxZuhzxpmwJKOgRFHJWIb9/KmqnqHhLdO55aOxFH/EGBvUQbL/RQ=="],
 
+    "drizzle-orm": ["drizzle-orm@0.45.2", "", { "peerDependencies": { "@aws-sdk/client-rds-data": ">=3", "@cloudflare/workers-types": ">=4", "@electric-sql/pglite": ">=0.2.0", "@libsql/client": ">=0.10.0", "@libsql/client-wasm": ">=0.10.0", "@neondatabase/serverless": ">=0.10.0", "@op-engineering/op-sqlite": ">=2", "@opentelemetry/api": "^1.4.1", "@planetscale/database": ">=1.13", "@prisma/client": "*", "@tidbcloud/serverless": "*", "@types/better-sqlite3": "*", "@types/pg": "*", "@types/sql.js": "*", "@upstash/redis": ">=1.34.7", "@vercel/postgres": ">=0.8.0", "@xata.io/client": "*", "better-sqlite3": ">=7", "bun-types": "*", "expo-sqlite": ">=14.0.0", "gel": ">=2", "knex": "*", "kysely": "*", "mysql2": ">=2", "pg": ">=8", "postgres": ">=3", "sql.js": ">=1", "sqlite3": ">=5" }, "optionalPeers": ["@aws-sdk/client-rds-data", "@cloudflare/workers-types", "@electric-sql/pglite", "@libsql/client", "@libsql/client-wasm", "@neondatabase/serverless", "@op-engineering/op-sqlite", "@opentelemetry/api", "@planetscale/database", "@prisma/client", "@tidbcloud/serverless", "@types/better-sqlite3", "@types/pg", "@types/sql.js", "@upstash/redis", "@vercel/postgres", "@xata.io/client", "better-sqlite3", "bun-types", "expo-sqlite", "gel", "knex", "kysely", "mysql2", "pg", "postgres", "sql.js", "sqlite3"] }, "sha512-kY0BSaTNYWnoDMVoyY8uxmyHjpJW1geOmBMdSSicKo9CIIWkSxMIj2rkeSR51b8KAPB7m+qysjuHme5nKP+E5Q=="],
+
     "enquirer": ["enquirer@2.4.1", "", { "dependencies": { "ansi-colors": "^4.1.1", "strip-ansi": "^6.0.1" } }, "sha512-rRqJg/6gd538VHvR3PSrdRBb/1Vy2YfzHqzvbhGIQpDRKIa4FgV/54b5Q1xYSxOOwKvjXweS26E0Q+nAMwp2pQ=="],
 
     "entities": ["entities@7.0.1", "", {}, "sha512-TWrgLOFUQTH994YUyl1yT4uyavY5nNB5muff+RtWaqNVCAK408b5ZnnbNAUEWLTCpum9w6arT70i1XdQ4UeOPA=="],
@@ -240,7 +246,7 @@
 
     "fs-extra": ["fs-extra@7.0.1", "", { "dependencies": { "graceful-fs": "^4.1.2", "jsonfile": "^4.0.0", "universalify": "^0.1.0" } }, "sha512-YJDaCJZEnBmcbw13fvdAM9AwNOJwOzrE4pqMqBq5nFiEqXUqHwlK4B+3pUw6JNvfSPtX05xFHtYy/1ni01eGCw=="],
 
-    "futonic": ["futonic@0.1.1-canary.9e309ac", "", { "dependencies": { "better-call": "^1.0.4", "kysely": "^0.27.6", "zod": "^4.3.6" }, "peerDependencies": { "better-sqlite3": ">=9.0.0", "mysql2": ">=3.0.0", "pg": ">=8.0.0" }, "optionalPeers": ["better-sqlite3", "mysql2", "pg"] }, "sha512-rYDLVD6L7VSdd/XiMPlHshnnvbGcfVf7kLgEwb8+P3Im1ZdHCGuY8P6G2cTw4sW+YMFG4rfb6/l7PNACrlGCzw=="],
+    "futonic": ["futonic@0.1.1-canary.55aeaaa", "", { "dependencies": { "better-call": "^1.0.4", "kysely": "^0.27.6", "zod": "^4.3.6" }, "peerDependencies": { "better-sqlite3": ">=9.0.0", "drizzle-orm": ">=0.30.0", "mysql2": ">=3.0.0", "pg": ">=8.0.0" }, "optionalPeers": ["better-sqlite3", "drizzle-orm", "mysql2", "pg"] }, "sha512-BuBiK9HXh0ra/q5Yczh+aVHfx13DO7xQDueVfQmzgyQ/phsu1D/sN84ZLcGRjtIG/xnAdRj6XXdpgKgKKAPO8w=="],
 
     "glob-parent": ["glob-parent@5.1.2", "", { "dependencies": { "is-glob": "^4.0.1" } }, "sha512-AOIgSQCepiJYwP3ARnGx+5VnTu2HBYdzbGP45eLw1vr3zB3vZLeyed1sC9hnbcOc9/SrMyM5RPQrkGz4aS9Zow=="],
 

@@ -4,11 +4,18 @@ console.log("[@spindesk/core] Building...");
 
 await $`rm -rf dist`;
 await Bun.build({
-	entrypoints: ["src/index.ts"],
+	entrypoints: ["src/index.ts", "src/drizzle.ts"],
 	outdir: "dist",
 	target: "node",
 	format: "esm",
-	external: ["better-call", "futonic", "liqe", "zod"],
+	external: [
+		"better-call",
+		"futonic",
+		"futonic/drizzle",
+		"drizzle-orm",
+		"liqe",
+		"zod",
+	],
 });
 
 // Generate declarations
