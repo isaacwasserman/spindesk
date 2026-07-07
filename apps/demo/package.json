@@ -17,7 +17,6 @@
     "@codemirror/view": "^6.43.6",
     "@lezer/highlight": "^1.2.3",
     "better-auth": "^1.6.23",
-    "futonic": "0.1.1-canary.9e309ac",
     "liqe": "^3.8.7",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"

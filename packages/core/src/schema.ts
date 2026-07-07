@@ -1,5 +1,8 @@
 import type { ServiceDBSchema } from "futonic";
 
+/** Service id futonic prefixes onto every emitted SQL table name. */
+export const serviceDeskId = "servicedesk";
+
 /**
  * Service-desk database schema.
  *
