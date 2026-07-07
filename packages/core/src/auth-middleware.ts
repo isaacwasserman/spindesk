@@ -24,14 +24,22 @@ export async function resolveIdentity(
 	}
 	const userId = session.user.id;
 
+	const isConfiguredAgent = config.agentUserIds?.includes(userId) ?? false;
+
 	let row = await svc.db.users.findOne([{ field: "id", value: userId }]);
 	if (!row) {
-		const role: Role = config.agentUserIds?.includes(userId) ? "agent" : "user";
 		row = await svc.db.users.create({
 			id: userId,
-			role,
+			role: isConfiguredAgent ? "agent" : "user",
 			created_at: new Date().toISOString(),
 		});
+	} else if (row.role === "user" && isConfiguredAgent) {
+		// Physically promote a configured agent whose row predates the config
+		// (or was created before they were seeded). This persists, so once
+		// promoted their id can be dropped from config.
+		row = (await svc.db.users.update([{ field: "id", value: userId }], {
+			role: "agent",
+		})) ?? { ...row, role: "agent" };
 	}
 	return { userId, role: row.role as Role };
 }
