@@ -1,4 +1,4 @@
-import { APIError, createMiddleware } from "better-call";
+import { APIError } from "better-call";
 import type {
 	Role,
 	ServiceDeskConfig,
@@ -57,27 +57,6 @@ export async function resolveIdentity(
 		return { userId, role: "agent" };
 	}
 	return { userId, role: row.role as Role };
-}
-
-/**
- * better-call middleware that authenticates the request and attaches
- * `{ serviceDesk: { userId, role } }` onto the handler context.
- *
- * futonic builds the router and prepends its own service middleware, which
- * injects `serviceCtx` onto `ctx.context`. We read it from there — this
- * middleware must run after futonic's (it's appended to `use` downstream).
- */
-export function createAuthMiddleware() {
-	return createMiddleware(async (ctx) => {
-		const serviceCtx = (ctx as unknown as { context: { serviceCtx: SvcCtx } })
-			.context.serviceCtx;
-		const headers: Headers =
-			(ctx.headers as Headers | undefined) ??
-			(ctx.request as Request | undefined)?.headers ??
-			new Headers();
-		const serviceDesk = await resolveIdentity(serviceCtx, headers);
-		return { serviceDesk };
-	});
 }
 
 /** Throws 403 unless the identity has the "agent" role. */

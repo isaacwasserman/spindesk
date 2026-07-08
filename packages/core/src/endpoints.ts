@@ -1,4 +1,4 @@
-import { APIError, type Middleware, createEndpoint } from "better-call";
+import { APIError } from "better-call";
 import {
 	type Expression,
 	type ExpressionBuilder,
@@ -6,7 +6,7 @@ import {
 	sql,
 } from "kysely";
 import { z } from "zod";
-import { requireAgent } from "./auth-middleware";
+import { requireAgent, resolveIdentity } from "./auth-middleware";
 import {
 	type FilterNode,
 	mentionsArchived,
@@ -16,6 +16,7 @@ import { resolveUserNames } from "./names";
 import {
 	type Ctx,
 	DEFAULT_MAX_ATTACHMENT_BYTES,
+	type DefineServiceDeskEndpoint,
 	type Role,
 	type ServiceDeskConfig,
 	type SvcCtx,
@@ -194,13 +195,35 @@ async function getAccessibleTicket(ctx: Ctx["context"], id: string) {
 	return ticket as Row;
 }
 
+/** Extract request headers from a better-call endpoint context. */
+function headersOf(ctx: unknown): Headers {
+	const c = ctx as { headers?: Headers; request?: Request };
+	return c.headers ?? c.request?.headers ?? new Headers();
+}
+
 /**
- * Builds all service-desk endpoints. `use` is the middleware chain (service
- * context + auth) supplied by the constructor's endpoints factory at build time.
+ * Builds all service-desk endpoints. `defineEndpoint` is futonic's pre-bound
+ * `createEndpoint` (its service-context middleware already baked in). We wrap it
+ * so every handler first authenticates and attaches `serviceDesk` to the
+ * context — done in the handler (not `use`) because futonic's baked middleware
+ * runs last, so `serviceCtx` is only guaranteed present once the handler runs.
  */
-export function createServiceDeskEndpoints(use: Middleware[]) {
+export function createServiceDeskEndpoints(
+	defineEndpoint: DefineServiceDeskEndpoint,
+) {
+	// biome-ignore lint/suspicious/noExplicitAny: passthrough over defineEndpoint's generic signature
+	const createEndpoint = ((path: any, options: any, handler: any) =>
+		defineEndpoint(path, options, async (ctx: unknown) => {
+			const context = (ctx as unknown as Ctx).context;
+			context.serviceDesk = await resolveIdentity(
+				context.serviceCtx,
+				headersOf(ctx),
+			);
+			return handler(ctx);
+		})) as unknown as DefineServiceDeskEndpoint;
+
 	/** Current user's service-desk profile — lets the host UI branch on role. */
-	const me = createEndpoint("/me", { method: "GET", use }, async (ctx) => {
+	const me = createEndpoint("/me", { method: "GET" }, async (ctx) => {
 		const { serviceCtx: svc, serviceDesk } = (ctx as unknown as Ctx).context;
 		const names = await resolveUserNames(authOf(svc), [serviceDesk.userId]);
 		return {
@@ -214,7 +237,6 @@ export function createServiceDeskEndpoints(use: Middleware[]) {
 		"/tickets",
 		{
 			method: "POST",
-			use,
 			body: z.object({
 				subject: z.string().min(1),
 				description: z.string().min(1),
@@ -246,7 +268,7 @@ export function createServiceDeskEndpoints(use: Middleware[]) {
 
 	const listTickets = createEndpoint(
 		"/tickets",
-		{ method: "GET", use },
+		{ method: "GET" },
 		async (ctx) => {
 			const { serviceCtx: svc, serviceDesk } = (ctx as unknown as Ctx).context;
 			const url = new URL((ctx.request as Request).url);
@@ -307,7 +329,7 @@ export function createServiceDeskEndpoints(use: Middleware[]) {
 
 	const getTicket = createEndpoint(
 		"/tickets/:id",
-		{ method: "GET", use },
+		{ method: "GET" },
 		async (ctx) => {
 			const context = (ctx as unknown as Ctx).context;
 			const { id } = ctx.params as { id: string };
@@ -320,7 +342,6 @@ export function createServiceDeskEndpoints(use: Middleware[]) {
 		"/tickets/:id",
 		{
 			method: "PATCH",
-			use,
 			body: z.object({
 				// Author-editable content.
 				subject: z.string().min(1).optional(),
@@ -405,7 +426,7 @@ export function createServiceDeskEndpoints(use: Middleware[]) {
 
 	const listComments = createEndpoint(
 		"/tickets/:id/comments",
-		{ method: "GET", use },
+		{ method: "GET" },
 		async (ctx) => {
 			const context = (ctx as unknown as Ctx).context;
 			const { serviceCtx: svc } = context;
@@ -430,7 +451,6 @@ export function createServiceDeskEndpoints(use: Middleware[]) {
 		"/tickets/:id/comments",
 		{
 			method: "POST",
-			use,
 			body: z.object({
 				body: z.string().min(1),
 				parentId: z.string().nullable().optional(),
@@ -483,7 +503,6 @@ export function createServiceDeskEndpoints(use: Middleware[]) {
 		"/users/:id/role",
 		{
 			method: "PATCH",
-			use,
 			body: z.object({ role: z.enum(["user", "agent"]) }),
 		},
 		async (ctx) => {
@@ -514,14 +533,10 @@ export function createServiceDeskEndpoints(use: Middleware[]) {
 	);
 
 	/** Available tag vocabulary, for the host UI's tag picker. */
-	const listTags = createEndpoint(
-		"/tags",
-		{ method: "GET", use },
-		async (ctx) => {
-			const { serviceCtx: svc } = (ctx as unknown as Ctx).context;
-			return { tags: configOf(svc).availableTags ?? [] };
-		},
-	);
+	const listTags = createEndpoint("/tags", { method: "GET" }, async (ctx) => {
+		const { serviceCtx: svc } = (ctx as unknown as Ctx).context;
+		return { tags: configOf(svc).availableTags ?? [] };
+	});
 
 	/**
 	 * Streamed file upload. `disableBody` stops better-call from buffering the
@@ -530,7 +545,7 @@ export function createServiceDeskEndpoints(use: Middleware[]) {
 	 */
 	const uploadAttachment = createEndpoint(
 		"/tickets/:id/attachments",
-		{ method: "POST", use, disableBody: true, requireRequest: true },
+		{ method: "POST", disableBody: true, requireRequest: true },
 		async (ctx) => {
 			const context = (ctx as unknown as Ctx).context;
 			const { serviceCtx: svc, serviceDesk } = context;
@@ -596,7 +611,7 @@ export function createServiceDeskEndpoints(use: Middleware[]) {
 
 	const listAttachments = createEndpoint(
 		"/tickets/:id/attachments",
-		{ method: "GET", use },
+		{ method: "GET" },
 		async (ctx) => {
 			const context = (ctx as unknown as Ctx).context;
 			const { serviceCtx: svc } = context;
@@ -615,7 +630,7 @@ export function createServiceDeskEndpoints(use: Middleware[]) {
 
 	const downloadAttachment = createEndpoint(
 		"/tickets/:id/attachments/:attId",
-		{ method: "GET", use },
+		{ method: "GET" },
 		async (ctx) => {
 			const context = (ctx as unknown as Ctx).context;
 			const { serviceCtx: svc } = context;
@@ -645,7 +660,7 @@ export function createServiceDeskEndpoints(use: Middleware[]) {
 
 	const deleteAttachment = createEndpoint(
 		"/tickets/:id/attachments/:attId",
-		{ method: "DELETE", use },
+		{ method: "DELETE" },
 		async (ctx) => {
 			const context = (ctx as unknown as Ctx).context;
 			const { serviceCtx: svc, serviceDesk } = context;
