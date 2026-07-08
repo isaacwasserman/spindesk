@@ -1,4 +1,8 @@
-import type { KyselyFromServiceDBSchema, ServiceContext } from "futonic";
+import type {
+	DefineEndpoint,
+	KyselyFromServiceDBSchema,
+	ServiceContext,
+} from "futonic";
 import type { ServiceDeskSchema } from "./schema";
 
 export type Role = "user" | "agent";
@@ -64,6 +68,16 @@ export const DEFAULT_MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
  * Kysely instance (`db`), the validated `config`, and a `logger`.
  */
 export type SvcCtx = ServiceContext<
+	ServiceDeskConfig,
+	KyselyFromServiceDBSchema<ServiceDeskSchema>
+>;
+
+/**
+ * futonic's pre-bound `createEndpoint`, specialized to this service. It bakes
+ * the service-context middleware into every endpoint, so handlers read a typed
+ * `ctx.context.serviceCtx`.
+ */
+export type DefineServiceDeskEndpoint = DefineEndpoint<
 	ServiceDeskConfig,
 	KyselyFromServiceDBSchema<ServiceDeskSchema>
 >;
