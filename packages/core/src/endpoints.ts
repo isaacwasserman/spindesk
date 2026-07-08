@@ -1,8 +1,17 @@
 import { APIError, type Middleware, createEndpoint } from "better-call";
+import {
+	type Expression,
+	type ExpressionBuilder,
+	type SqlBool,
+	sql,
+} from "kysely";
 import { z } from "zod";
 import { requireAgent } from "./auth-middleware";
-import { toCamel, toCamelList } from "./case";
-import { mentionsArchived, parseLuceneToFilter } from "./filter";
+import {
+	type FilterNode,
+	mentionsArchived,
+	parseLuceneToFilter,
+} from "./filter";
 import { resolveUserNames } from "./names";
 import {
 	type Ctx,
@@ -13,8 +22,10 @@ import {
 	TICKET_STATUS,
 } from "./types";
 
-/** A better-call `Where` clause. */
-type Where = { field: string; value: unknown };
+/**
+ * A flat DB row. futonic's Kysely instance installs a `CamelCasePlugin`, so
+ * rows already come back camelCase — the API vocabulary — with no conversion.
+ */
 type Row = Record<string, unknown>;
 
 function configOf(svc: SvcCtx): ServiceDeskConfig {
@@ -30,13 +41,79 @@ const MAX_LIMIT = 100;
 /** Attachment metadata columns (everything except the binary `data` blob). */
 const ATTACHMENT_META = [
 	"id",
-	"ticket_id",
+	"ticketId",
 	"filename",
-	"content_type",
+	"contentType",
 	"size",
-	"uploaded_by",
-	"created_at",
-];
+	"uploadedBy",
+	"createdAt",
+] as const;
+
+const ALWAYS_TRUE = sql<SqlBool>`1 = 1`;
+
+/**
+ * Translate a `FilterNode` tree into a Kysely boolean expression over the
+ * ticket columns. Column names are camelCase keys; the `CamelCasePlugin` maps
+ * them to snake_case in the emitted SQL.
+ */
+function ticketFilterExpression(
+	// biome-ignore lint/suspicious/noExplicitAny: builder over a dynamic column set
+	eb: ExpressionBuilder<any, any>,
+	node: FilterNode,
+): Expression<SqlBool> {
+	switch (node.type) {
+		case "and": {
+			const parts = node.nodes.map((n) => ticketFilterExpression(eb, n));
+			return parts.length ? eb.and(parts) : ALWAYS_TRUE;
+		}
+		case "or": {
+			const parts = node.nodes.map((n) => ticketFilterExpression(eb, n));
+			return parts.length ? eb.or(parts) : ALWAYS_TRUE;
+		}
+		case "not":
+			return eb.not(ticketFilterExpression(eb, node.node));
+		case "cond": {
+			// biome-ignore lint/suspicious/noExplicitAny: dynamic column ref
+			const field = node.field as any;
+			const value = node.value;
+			switch (node.op) {
+				case "eq":
+					return eb(field, "=", value);
+				case "ne":
+					return eb(field, "<>", value);
+				case "gt":
+					return eb(field, ">", value);
+				case "gte":
+					return eb(field, ">=", value);
+				case "lt":
+					return eb(field, "<", value);
+				case "lte":
+					return eb(field, "<=", value);
+				case "in":
+					return eb(field, "in", value as unknown[]);
+				case "not_in":
+					return eb(field, "not in", value as unknown[]);
+				case "contains":
+					return eb(field, "like", `%${value}%`);
+				case "startsWith":
+					return eb(field, "like", `${value}%`);
+				case "endsWith":
+					return eb(field, "like", `%${value}`);
+				case "isNull":
+					return eb(field, "is", null);
+				case "isNotNull":
+					return eb(field, "is not", null);
+			}
+		}
+	}
+}
+
+/** Whether a top-level AND/OR node carries any clauses to apply. */
+function hasClauses(node: FilterNode): boolean {
+	return node.type === "and" || node.type === "or"
+		? node.nodes.length > 0
+		: true;
+}
 
 /** Tags are stored as a JSON array of unique tokens: ["billing","urgent"]. */
 function serializeTags(tags: string[]): string | null {
@@ -69,17 +146,14 @@ function validateTags(svc: SvcCtx, tags: string[]): void {
 async function enrichTickets(svc: SvcCtx, tickets: Row[]): Promise<Row[]> {
 	const names = await resolveUserNames(
 		authOf(svc),
-		tickets.flatMap((t) => [
-			t.user_id as string,
-			t.assignee_id as string | null,
-		]),
+		tickets.flatMap((t) => [t.userId as string, t.assigneeId as string | null]),
 	);
 	return tickets.map((t) => ({
 		...t,
 		tags: parseTags(t.tags),
-		user_name: names.get(t.user_id as string)?.name ?? null,
-		assignee_name: t.assignee_id
-			? (names.get(t.assignee_id as string)?.name ?? null)
+		userName: names.get(t.userId as string)?.name ?? null,
+		assigneeName: t.assigneeId
+			? (names.get(t.assigneeId as string)?.name ?? null)
 			: null,
 	}));
 }
@@ -92,11 +166,11 @@ async function enrichTicket(svc: SvcCtx, ticket: Row): Promise<Row> {
 async function enrichComments(svc: SvcCtx, comments: Row[]): Promise<Row[]> {
 	const names = await resolveUserNames(
 		authOf(svc),
-		comments.map((c) => c.author_id as string),
+		comments.map((c) => c.authorId as string),
 	);
 	return comments.map((c) => ({
 		...c,
-		author_name: names.get(c.author_id as string)?.name ?? null,
+		authorName: names.get(c.authorId as string)?.name ?? null,
 	}));
 }
 
@@ -106,19 +180,23 @@ async function enrichComments(svc: SvcCtx, comments: Row[]): Promise<Row[]> {
  */
 async function getAccessibleTicket(ctx: Ctx["context"], id: string) {
 	const { serviceCtx: svc, serviceDesk } = ctx;
-	const ticket = await svc.db.tickets.findOne([{ field: "id", value: id }]);
+	const ticket = await svc.db
+		.selectFrom("tickets")
+		.selectAll()
+		.where("id", "=", id)
+		.executeTakeFirst();
 	if (!ticket) {
 		throw new APIError("NOT_FOUND", { message: "Ticket not found" });
 	}
-	if (serviceDesk.role !== "agent" && ticket.user_id !== serviceDesk.userId) {
+	if (serviceDesk.role !== "agent" && ticket.userId !== serviceDesk.userId) {
 		throw new APIError("FORBIDDEN", { message: "Not your ticket" });
 	}
-	return ticket;
+	return ticket as Row;
 }
 
 /**
  * Builds all service-desk endpoints. `use` is the middleware chain (service
- * context + auth) supplied by the router factory at mount time.
+ * context + auth) supplied by the constructor's endpoints factory at build time.
  */
 export function createServiceDeskEndpoints(use: Middleware[]) {
 	/** Current user's service-desk profile — lets the host UI branch on role. */
@@ -148,20 +226,21 @@ export function createServiceDeskEndpoints(use: Middleware[]) {
 			const tags = ctx.body.tags ?? [];
 			validateTags(svc, tags);
 			const now = new Date().toISOString();
-			const ticket = await svc.db.tickets.create({
+			const ticket = {
 				id: crypto.randomUUID(),
-				user_id: serviceDesk.userId,
+				userId: serviceDesk.userId,
 				subject: ctx.body.subject,
 				description: ctx.body.description,
 				status: "open",
-				assignee_id: null,
+				assigneeId: null,
 				tags: serializeTags(tags),
-				archived_at: null,
-				created_at: now,
-				updated_at: now,
-			});
+				archivedAt: null,
+				createdAt: now,
+				updatedAt: now,
+			};
+			await svc.db.insertInto("tickets").values(ticket).execute();
 			svc.logger.info(`Ticket created: ${ticket.id}`);
-			return toCamel(await enrichTicket(svc, ticket));
+			return await enrichTicket(svc, ticket);
 		},
 	);
 
@@ -183,31 +262,42 @@ export function createServiceDeskEndpoints(use: Middleware[]) {
 			// Compose the filter tree: mandatory ownership scoping + a default
 			// "hide archived" clause + the user's Lucene query. Ownership can't
 			// be overridden by `q`.
-			const nodes: import("./filter").FilterNode[] = [];
+			const nodes: FilterNode[] = [];
 			if (serviceDesk.role !== "agent") {
 				nodes.push({
 					type: "cond",
-					field: "user_id",
+					field: "userId",
 					op: "eq",
 					value: serviceDesk.userId,
 				});
 			}
 			if (!mentionsArchived(q)) {
-				nodes.push({ type: "cond", field: "archived_at", op: "isNull" });
+				nodes.push({ type: "cond", field: "archivedAt", op: "isNull" });
 			}
 			const parsed = parseLuceneToFilter(q);
 			if (parsed) nodes.push(parsed);
-			const filter = { type: "and" as const, nodes };
+			const filter: FilterNode = { type: "and", nodes };
 
-			const tickets = await svc.db.tickets.findMany({
-				filter,
-				sortBy: { field: "created_at", direction: "desc" },
-				limit,
-				offset,
-			});
-			const total = await svc.db.tickets.count({ filter });
+			let listQuery = svc.db.selectFrom("tickets").selectAll();
+			let countQuery = svc.db
+				.selectFrom("tickets")
+				.select((eb) => eb.fn.countAll().as("count"));
+			if (hasClauses(filter)) {
+				listQuery = listQuery.where((eb) => ticketFilterExpression(eb, filter));
+				countQuery = countQuery.where((eb) =>
+					ticketFilterExpression(eb, filter),
+				);
+			}
+
+			const tickets = (await listQuery
+				.orderBy("createdAt", "desc")
+				.limit(limit)
+				.offset(offset)
+				.execute()) as Row[];
+			const countRow = await countQuery.executeTakeFirst();
+			const total = Number(countRow?.count ?? 0);
 			return {
-				tickets: toCamelList(await enrichTickets(svc, tickets)),
+				tickets: await enrichTickets(svc, tickets),
 				total,
 				limit,
 				offset,
@@ -222,7 +312,7 @@ export function createServiceDeskEndpoints(use: Middleware[]) {
 			const context = (ctx as unknown as Ctx).context;
 			const { id } = ctx.params as { id: string };
 			const ticket = await getAccessibleTicket(context, id);
-			return toCamel(await enrichTicket(context.serviceCtx, ticket));
+			return await enrichTicket(context.serviceCtx, ticket);
 		},
 	);
 
@@ -248,9 +338,9 @@ export function createServiceDeskEndpoints(use: Middleware[]) {
 			const { id } = ctx.params as { id: string };
 			const ticket = await getAccessibleTicket(context, id);
 			const isAgent = serviceDesk.role === "agent";
-			const isOwner = ticket.user_id === serviceDesk.userId;
+			const isOwner = ticket.userId === serviceDesk.userId;
 
-			const data: Record<string, unknown> = {};
+			const data: Row = {};
 
 			// Author (or agent) may edit content, tags, and archive state.
 			const editsContent =
@@ -270,7 +360,7 @@ export function createServiceDeskEndpoints(use: Middleware[]) {
 				data.tags = serializeTags(ctx.body.tags);
 			}
 			if (ctx.body.archived !== undefined) {
-				data.archived_at = ctx.body.archived ? new Date().toISOString() : null;
+				data.archivedAt = ctx.body.archived ? new Date().toISOString() : null;
 			}
 
 			if (ctx.body.status !== undefined) {
@@ -292,18 +382,24 @@ export function createServiceDeskEndpoints(use: Middleware[]) {
 						message: "Only agents can assign tickets",
 					});
 				}
-				data.assignee_id = ctx.body.assigneeId;
+				data.assigneeId = ctx.body.assigneeId;
 			}
 			if (Object.keys(data).length === 0) {
-				return toCamel(await enrichTicket(svc, ticket));
+				return await enrichTicket(svc, ticket);
 			}
 
-			data.updated_at = new Date().toISOString();
-			const updated = await svc.db.tickets.update(
-				[{ field: "id", value: id }],
-				data,
-			);
-			return toCamel(await enrichTicket(svc, updated));
+			data.updatedAt = new Date().toISOString();
+			await svc.db
+				.updateTable("tickets")
+				.set(data as never)
+				.where("id", "=", id)
+				.execute();
+			const updated = (await svc.db
+				.selectFrom("tickets")
+				.selectAll()
+				.where("id", "=", id)
+				.executeTakeFirstOrThrow()) as Row;
+			return await enrichTicket(svc, updated);
 		},
 	);
 
@@ -316,13 +412,15 @@ export function createServiceDeskEndpoints(use: Middleware[]) {
 			const { id } = ctx.params as { id: string };
 			await getAccessibleTicket(context, id); // authorize
 			// Flat, chronological list; the client assembles the reply tree
-			// from each comment's `parent_id`.
-			const comments = await svc.db.comments.findMany({
-				where: [{ field: "ticket_id", value: id }],
-				sortBy: { field: "created_at", direction: "asc" },
-			});
+			// from each comment's `parentId`.
+			const comments = (await svc.db
+				.selectFrom("comments")
+				.selectAll()
+				.where("ticketId", "=", id)
+				.orderBy("createdAt", "asc")
+				.execute()) as Row[];
 			return {
-				comments: toCamelList(await enrichComments(svc, comments)),
+				comments: await enrichComments(svc, comments),
 				total: comments.length,
 			};
 		},
@@ -347,10 +445,12 @@ export function createServiceDeskEndpoints(use: Middleware[]) {
 			// A reply must target an existing comment on the same ticket.
 			const parentId = ctx.body.parentId ?? null;
 			if (parentId) {
-				const parent = await svc.db.comments.findOne([
-					{ field: "id", value: parentId },
-				]);
-				if (!parent || parent.ticket_id !== id) {
+				const parent = await svc.db
+					.selectFrom("comments")
+					.selectAll()
+					.where("id", "=", parentId)
+					.executeTakeFirst();
+				if (!parent || parent.ticketId !== id) {
 					throw new APIError("BAD_REQUEST", {
 						message: "Invalid parent comment",
 					});
@@ -358,20 +458,23 @@ export function createServiceDeskEndpoints(use: Middleware[]) {
 			}
 
 			const now = new Date().toISOString();
-			const comment = await svc.db.comments.create({
+			const comment = {
 				id: crypto.randomUUID(),
-				ticket_id: id,
-				parent_id: parentId,
-				author_id: serviceDesk.userId,
-				author_role: serviceDesk.role,
+				ticketId: id,
+				parentId,
+				authorId: serviceDesk.userId,
+				authorRole: serviceDesk.role,
 				body: ctx.body.body,
-				created_at: now,
-			});
+				createdAt: now,
+			};
+			await svc.db.insertInto("comments").values(comment).execute();
 			// Bump ticket activity timestamp.
-			await svc.db.tickets.update([{ field: "id", value: id }], {
-				updated_at: now,
-			});
-			return toCamel((await enrichComments(svc, [comment]))[0] as Row);
+			await svc.db
+				.updateTable("tickets")
+				.set({ updatedAt: now })
+				.where("id", "=", id)
+				.execute();
+			return (await enrichComments(svc, [comment]))[0] as Row;
 		},
 	);
 
@@ -389,17 +492,24 @@ export function createServiceDeskEndpoints(use: Middleware[]) {
 			const { id } = ctx.params as { id: string };
 			const role = ctx.body.role as Role;
 
-			const existing = await svc.db.users.findOne([{ field: "id", value: id }]);
-			const row = existing
-				? await svc.db.users.update([{ field: "id", value: id }], {
-						role,
-					})
-				: await svc.db.users.create({
-						id,
-						role,
-						created_at: new Date().toISOString(),
-					});
-			return { id, role: row.role as Role };
+			const existing = await svc.db
+				.selectFrom("users")
+				.selectAll()
+				.where("id", "=", id)
+				.executeTakeFirst();
+			if (existing) {
+				await svc.db
+					.updateTable("users")
+					.set({ role })
+					.where("id", "=", id)
+					.execute();
+			} else {
+				await svc.db
+					.insertInto("users")
+					.values({ id, role, createdAt: new Date().toISOString() })
+					.execute();
+			}
+			return { id, role };
 		},
 	);
 
@@ -467,19 +577,20 @@ export function createServiceDeskEndpoints(use: Middleware[]) {
 				offset += chunk.byteLength;
 			}
 
-			const row = await svc.db.attachments.create({
+			const row = {
 				id: crypto.randomUUID(),
-				ticket_id: id,
+				ticketId: id,
 				filename,
-				content_type: contentType,
+				contentType,
 				size,
 				data,
-				uploaded_by: serviceDesk.userId,
-				created_at: new Date().toISOString(),
-			});
+				uploadedBy: serviceDesk.userId,
+				createdAt: new Date().toISOString(),
+			};
+			await svc.db.insertInto("attachments").values(row).execute();
 			svc.logger.info(`Attachment stored: ${row.id} (${size} bytes)`);
 			const { data: _data, ...meta } = row;
-			return toCamel(meta);
+			return meta;
 		},
 	);
 
@@ -492,12 +603,13 @@ export function createServiceDeskEndpoints(use: Middleware[]) {
 			const { id } = ctx.params as { id: string };
 			await getAccessibleTicket(context, id);
 			// Metadata only — never load the blobs to list them.
-			const rows = await svc.db.attachments.findMany({
-				where: [{ field: "ticket_id", value: id }],
-				select: ATTACHMENT_META,
-				sortBy: { field: "created_at", direction: "asc" },
-			});
-			return { attachments: toCamelList(rows), total: rows.length };
+			const rows = await svc.db
+				.selectFrom("attachments")
+				.select([...ATTACHMENT_META])
+				.where("ticketId", "=", id)
+				.orderBy("createdAt", "asc")
+				.execute();
+			return { attachments: rows, total: rows.length };
 		},
 	);
 
@@ -509,17 +621,19 @@ export function createServiceDeskEndpoints(use: Middleware[]) {
 			const { serviceCtx: svc } = context;
 			const { id, attId } = ctx.params as { id: string; attId: string };
 			await getAccessibleTicket(context, id);
-			const row = await svc.db.attachments.findOne([
-				{ field: "id", value: attId },
-			]);
-			if (!row || row.ticket_id !== id) {
+			const row = await svc.db
+				.selectFrom("attachments")
+				.selectAll()
+				.where("id", "=", attId)
+				.executeTakeFirst();
+			if (!row || row.ticketId !== id) {
 				throw new APIError("NOT_FOUND", { message: "Attachment not found" });
 			}
 			const raw = row.data as Uint8Array | ArrayBufferLike;
 			const bytes = raw instanceof Uint8Array ? raw : new Uint8Array(raw);
 			return new Response(bytes as unknown as BodyInit, {
 				headers: {
-					"content-type": String(row.content_type),
+					"content-type": String(row.contentType),
 					"content-length": String(row.size),
 					"content-disposition": `attachment; filename="${String(
 						row.filename,
@@ -537,18 +651,20 @@ export function createServiceDeskEndpoints(use: Middleware[]) {
 			const { serviceCtx: svc, serviceDesk } = context;
 			const { id, attId } = ctx.params as { id: string; attId: string };
 			const ticket = await getAccessibleTicket(context, id);
-			const row = await svc.db.attachments.findOne([
-				{ field: "id", value: attId },
-			]);
-			if (!row || row.ticket_id !== id) {
+			const row = await svc.db
+				.selectFrom("attachments")
+				.selectAll()
+				.where("id", "=", attId)
+				.executeTakeFirst();
+			if (!row || row.ticketId !== id) {
 				throw new APIError("NOT_FOUND", { message: "Attachment not found" });
 			}
 			const isAgent = serviceDesk.role === "agent";
-			const isOwner = ticket.user_id === serviceDesk.userId;
+			const isOwner = ticket.userId === serviceDesk.userId;
 			if (!isAgent && !isOwner) {
 				throw new APIError("FORBIDDEN", { message: "Not allowed" });
 			}
-			await svc.db.attachments.delete([{ field: "id", value: attId }]);
+			await svc.db.deleteFrom("attachments").where("id", "=", attId).execute();
 			return { ok: true };
 		},
 	);

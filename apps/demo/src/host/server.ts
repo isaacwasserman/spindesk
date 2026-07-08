@@ -5,8 +5,11 @@
  */
 import { Database } from "bun:sqlite";
 import { getMigrations } from "better-auth/db/migration";
-import { servicedesk } from "@spindesk/core";
+import { type ServiceDeskArgs, servicedesk } from "@spindesk/core";
 import { type Auth, createAuth } from "./auth";
+
+/** The raw connection type the service accepts (a Kysely SqliteDatabase, etc). */
+type ServiceConnection = ServiceDeskArgs["database"]["connection"];
 
 /**
  * Service-desk DDL. futonic no longer generates migrations; the host owns its
@@ -97,23 +100,29 @@ export async function createApp(opts: CreateAppOptions = {}): Promise<App> {
 	await runMigrations();
 	inner.exec(SERVICEDESK_DDL);
 
-	// The service opens its own Kysely instance from `database`; hand it the
-	// wrapped connection so SqliteDialect gets reader detection. It shares the
-	// host's connection, so we (not it) close the db on shutdown. `mount` and
-	// `baseURL` are supplied to createHandler, which builds the router.
+	// The service opens its own Kysely instance from `database.connection`; hand
+	// it the wrapped connection (provider "sqlite") so SqliteDialect gets reader
+	// detection. It shares the host's connection, so we (not it) close the db on
+	// shutdown. `service.handler` is a web-standard (Request) => Response.
 	const service = servicedesk({
-		database: db,
+		// `wrapBunSqlite` adds the `reader` flag Kysely's SqliteDialect needs at
+		// runtime; the cast bridges bun:sqlite's type to Kysely's SqliteDatabase.
+		database: {
+			connection: db as unknown as ServiceConnection,
+			provider: "sqlite",
+		},
 		config: { auth, agentUserIds, availableTags },
 	});
-	const handler = await service.createHandler({ baseURL, mountPath: mount });
+	const handler = service.handler;
 
 	async function fetch(request: Request): Promise<Response> {
 		const url = new URL(request.url);
 		const { pathname } = url;
 		if (pathname.startsWith("/api/auth")) return auth.handler(request);
 		if (pathname === mount || pathname.startsWith(`${mount}/`)) {
-			// The service router registers un-prefixed paths (e.g. "/tickets");
-			// mountPath is context-only, so strip it before dispatching.
+			// The service router registers un-prefixed paths (e.g. "/tickets")
+			// and has no notion of a mount, so the host strips its own prefix
+			// before dispatching.
 			url.pathname = pathname.slice(mount.length) || "/";
 			return handler(new Request(url, request));
 		}

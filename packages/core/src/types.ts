@@ -1,4 +1,4 @@
-import type { ServiceContext } from "futonic";
+import type { KyselyFromServiceDBSchema, ServiceContext } from "futonic";
 import type { ServiceDeskSchema } from "./schema";
 
 export type Role = "user" | "agent";
@@ -39,10 +39,11 @@ export interface AuthLike {
 }
 
 /**
- * Runtime configuration the host supplies via `servicedesk({ mount, database, config })`.
- * It surfaces on `serviceCtx.config`.
+ * Runtime configuration the host supplies via `servicedesk({ database, config })`.
+ * It surfaces on `serviceCtx.config`. Declared as a type alias (not an
+ * interface) so it satisfies futonic's `Record<string, unknown>` config bound.
  */
-export interface ServiceDeskConfig {
+export type ServiceDeskConfig = {
 	/** better-auth instance used to authenticate incoming requests. */
 	auth: AuthLike;
 	/** better-auth user ids seeded with the "agent" role on first sight. */
@@ -53,13 +54,19 @@ export interface ServiceDeskConfig {
 	availableTags?: string[];
 	/** Max attachment size in bytes (default 5 MiB). */
 	maxAttachmentBytes?: number;
-}
+};
 
 /** Default attachment size cap: 5 MiB. */
 export const DEFAULT_MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 
-/** ServiceContext scoped to this service's schema. */
-export type SvcCtx = ServiceContext<ServiceDeskSchema>;
+/**
+ * ServiceContext scoped to this service. futonic's context now carries a typed
+ * Kysely instance (`db`), the validated `config`, and a `logger`.
+ */
+export type SvcCtx = ServiceContext<
+	ServiceDeskConfig,
+	KyselyFromServiceDBSchema<ServiceDeskSchema>
+>;
 
 /** Identity resolved by the auth middleware for each request. */
 export interface ServiceDeskIdentity {

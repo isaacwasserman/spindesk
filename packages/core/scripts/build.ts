@@ -13,6 +13,7 @@ await Bun.build({
 		"futonic",
 		"futonic/drizzle",
 		"drizzle-orm",
+		"kysely",
 		"liqe",
 		"zod",
 	],
