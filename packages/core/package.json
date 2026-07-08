@@ -29,8 +29,9 @@
     "format": "biome format --write src/"
   },
   "dependencies": {
-    "better-call": "^1.3.7",
-    "futonic": "0.1.1-canary.55aeaaa",
+    "better-call": "^2.0.5",
+    "futonic": "0.1.1-canary.237459b",
+    "kysely": "^0.29.3",
     "liqe": "^3.8.7",
     "zod": "^4.4.3"
   },

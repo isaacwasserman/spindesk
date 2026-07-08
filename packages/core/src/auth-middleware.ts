@@ -29,20 +29,32 @@ export async function resolveIdentity(
 		(config.agentUserIds?.includes(userId) ?? false) ||
 		(email !== null && (config.agentEmails?.includes(email) ?? false));
 
-	let row = await svc.db.users.findOne([{ field: "id", value: userId }]);
+	const row = await svc.db
+		.selectFrom("users")
+		.selectAll()
+		.where("id", "=", userId)
+		.executeTakeFirst();
 	if (!row) {
-		row = await svc.db.users.create({
-			id: userId,
-			role: isConfiguredAgent ? "agent" : "user",
-			created_at: new Date().toISOString(),
-		});
-	} else if (row.role === "user" && isConfiguredAgent) {
+		await svc.db
+			.insertInto("users")
+			.values({
+				id: userId,
+				role: isConfiguredAgent ? "agent" : "user",
+				createdAt: new Date().toISOString(),
+			})
+			.execute();
+		return { userId, role: isConfiguredAgent ? "agent" : "user" };
+	}
+	if (row.role === "user" && isConfiguredAgent) {
 		// Physically promote a configured agent whose row predates the config
 		// (or was created before they were seeded). This persists, so once
 		// promoted their id can be dropped from config.
-		row = (await svc.db.users.update([{ field: "id", value: userId }], {
-			role: "agent",
-		})) ?? { ...row, role: "agent" };
+		await svc.db
+			.updateTable("users")
+			.set({ role: "agent" })
+			.where("id", "=", userId)
+			.execute();
+		return { userId, role: "agent" };
 	}
 	return { userId, role: row.role as Role };
 }

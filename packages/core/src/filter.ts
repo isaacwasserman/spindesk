@@ -3,9 +3,9 @@ import { type LiqeQuery, type TagToken, parse } from "liqe";
 import { TICKET_STATUS } from "./types";
 
 /**
- * Boolean filter tree consumed by the (patched) futonic adapter's
- * `findMany({ filter })` / `count({ filter })`. Structurally matches futonic's
- * own `FilterNode`, so it's passed through directly.
+ * Boolean filter tree the ticket-list endpoint translates into a Kysely
+ * `WHERE` expression (see `ticketFilterExpression` in endpoints.ts). Fields are
+ * camelCase column keys; futonic's `CamelCasePlugin` maps them to snake_case.
  */
 export type FilterOp =
 	| "eq"
@@ -37,11 +37,11 @@ const FIELDS: Record<string, { column: string; kind: FieldKind }> = {
 	subject: { column: "subject", kind: "text" },
 	description: { column: "description", kind: "text" },
 	status: { column: "status", kind: "enum" },
-	assignee: { column: "assignee_id", kind: "exact" },
+	assignee: { column: "assigneeId", kind: "exact" },
 	tag: { column: "tags", kind: "tag" },
-	archived: { column: "archived_at", kind: "archived" },
-	createdAt: { column: "created_at", kind: "date" },
-	updatedAt: { column: "updated_at", kind: "date" },
+	archived: { column: "archivedAt", kind: "archived" },
+	createdAt: { column: "createdAt", kind: "date" },
+	updatedAt: { column: "updatedAt", kind: "date" },
 };
 
 const CMP: Record<string, FilterOp> = {

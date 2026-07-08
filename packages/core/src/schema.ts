@@ -1,102 +1,106 @@
 import type { ServiceDBSchema } from "futonic";
 
-/** Service id futonic prefixes onto every emitted SQL table name. */
+/**
+ * Service id. futonic prefixes it onto every physical table name (via a runtime
+ * `TablePrefixPlugin` on `svc.db`, and in the generated drizzle schema), so
+ * these tables land in the host database as `servicedesk_*` with no collisions.
+ */
 export const serviceDeskId = "servicedesk";
 
 /**
- * Service-desk database schema.
+ * Service-desk database schema (futonic's dialect-agnostic `ServiceDBSchema`).
  *
- * futonic prefixes every table with the service id, so these become
- * `servicedesk_users`, `servicedesk_tickets`, and `servicedesk_comments`
- * in the host's database — no collisions with host or sibling-service tables.
+ * Table and column keys are the logical (camelCase) names endpoints query
+ * against `svc.db` — e.g. `db.selectFrom("tickets")`, `where("userId", ...)`.
+ * futonic's `CamelCasePlugin` + `TablePrefixPlugin` rewrite those to the
+ * physical snake_case, service-prefixed identifiers (`servicedesk_tickets`,
+ * `user_id`) at query time, so the prefix never appears in this file.
+ *
+ * Columns are NOT NULL unless marked `optional`. Timestamps are stored as ISO
+ * `string`s (TEXT), matching the hand-maintained host migration.
  */
 export const serviceDeskSchema = {
 	tables: {
 		// Sidecar user info, keyed by the better-auth user id. Holds only the
 		// service-desk-specific bits the host's auth doesn't know about (role).
 		users: {
-			fields: {
-				id: { type: "string", primaryKey: true, required: true },
-				role: {
-					type: "string",
-					required: true,
-					enum: ["user", "agent"],
-				},
-				created_at: { type: "date", required: true },
+			name: "users",
+			columns: {
+				id: { type: "string", primaryKey: true },
+				role: { type: "string" },
+				createdAt: { type: "string" },
 			},
 		},
 		tickets: {
-			fields: {
-				id: { type: "string", primaryKey: true, required: true },
-				user_id: { type: "string", required: true },
-				subject: { type: "string", required: true },
-				description: { type: "string", required: true },
-				status: {
-					type: "string",
-					required: true,
-					enum: ["open", "pending", "resolved", "closed"],
-				},
-				assignee_id: { type: "string" },
+			name: "tickets",
+			columns: {
+				id: { type: "string", primaryKey: true },
+				userId: { type: "string" },
+				subject: { type: "string" },
+				description: { type: "string" },
+				status: { type: "string" },
+				assigneeId: { type: "string", optional: true },
 				// JSON array of tags (e.g. ["billing","urgent"]); kept
 				// denormalized so Lucene filters map to a single column.
 				// Stored as JSON text on SQLite/MySQL, jsonb on Postgres.
-				tags: { type: "json" },
+				tags: { type: "json", optional: true },
 				// Set when the author archives the ticket; hides it from
 				// default listings.
-				archived_at: { type: "date" },
-				created_at: { type: "date", required: true },
-				updated_at: { type: "date", required: true },
+				archivedAt: { type: "string", optional: true },
+				createdAt: { type: "string" },
+				updatedAt: { type: "string" },
 			},
 		},
 		// Ticket file attachments. `data` holds the raw bytes (BYTEA in
 		// Postgres, BLOB in SQLite/MySQL).
 		attachments: {
-			fields: {
-				id: { type: "string", primaryKey: true, required: true },
-				ticket_id: {
+			name: "attachments",
+			columns: {
+				id: { type: "string", primaryKey: true },
+				ticketId: {
 					type: "string",
-					required: true,
 					references: {
-						model: "tickets",
-						field: "id",
+						table: "tickets",
+						column: "id",
 						onDelete: "cascade",
 					},
 				},
-				filename: { type: "string", required: true },
-				content_type: { type: "string", required: true },
-				size: { type: "number", required: true },
-				data: { type: "binary", required: true },
-				uploaded_by: { type: "string", required: true },
-				created_at: { type: "date", required: true },
+				filename: { type: "string" },
+				contentType: { type: "string" },
+				size: { type: "integer" },
+				data: { type: "blob" },
+				uploadedBy: { type: "string" },
+				createdAt: { type: "string" },
 			},
 		},
 		comments: {
-			fields: {
-				id: { type: "string", primaryKey: true, required: true },
-				ticket_id: {
+			name: "comments",
+			columns: {
+				id: { type: "string", primaryKey: true },
+				ticketId: {
 					type: "string",
-					required: true,
 					references: {
-						model: "tickets",
-						field: "id",
+						table: "tickets",
+						column: "id",
 						onDelete: "cascade",
 					},
 				},
 				// Parent comment for threaded replies; null for top-level
 				// comments. Self-referential FK, cascades on parent delete.
-				parent_id: {
+				parentId: {
 					type: "string",
+					optional: true,
 					references: {
-						model: "comments",
-						field: "id",
+						table: "comments",
+						column: "id",
 						onDelete: "cascade",
 					},
 				},
-				author_id: { type: "string", required: true },
+				authorId: { type: "string" },
 				// Snapshot of the author's role at write time, for display.
-				author_role: { type: "string", required: true },
-				body: { type: "string", required: true },
-				created_at: { type: "date", required: true },
+				authorRole: { type: "string" },
+				body: { type: "string" },
+				createdAt: { type: "string" },
 			},
 		},
 	},
