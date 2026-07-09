@@ -1,3 +1,4 @@
+import { createSpindeskClient } from "@spindesk/core/client";
 import { createAuthClient } from "better-auth/react";
 
 /** better-auth browser client. Talks to /api/auth on the same origin. */
@@ -5,17 +6,19 @@ export const authClient = createAuthClient({
 	baseURL: window.location.origin,
 });
 
-const BASE = "/api/servicedesk";
+const BASE = `${window.location.origin}/api/servicedesk`;
 
-async function sd<T = any>(path: string, init?: RequestInit): Promise<T> {
-	const res = await fetch(BASE + path, {
-		credentials: "include",
-		headers: init?.body ? { "content-type": "application/json" } : undefined,
-		...init,
-	});
-	const data = (await res.json().catch(() => ({}))) as any;
-	if (!res.ok) {
-		throw new Error(data?.message || data?.error || res.statusText);
+/** Type-safe futonic client bound to the mounted service-desk router. */
+const client = createSpindeskClient({ baseURL: BASE, credentials: "include" });
+
+/** Unwrap a better-fetch `{ data, error }` result, throwing the server message. */
+async function unwrap<T>(
+	// biome-ignore lint/suspicious/noExplicitAny: better-fetch result union
+	promise: Promise<any>,
+): Promise<T> {
+	const { data, error } = await promise;
+	if (error) {
+		throw new Error(error.message || error.statusText || "Request failed");
 	}
 	return data as T;
 }
@@ -74,22 +77,23 @@ export interface Comment {
 
 /** Typed wrapper over the service-desk endpoints. */
 export const api = {
-	me: () => sd<{ id: string; role: Role; name: string | null }>("/me"),
-	tags: () => sd<{ tags: string[] }>("/tags"),
+	me: () =>
+		unwrap<{ id: string; role: Role; name: string | null }>(client("/me")),
+	tags: () => unwrap<{ tags: string[] }>(client("/tags")),
 	listTickets: (query: TicketQuery = {}) => {
-		const p = new URLSearchParams();
-		if (query.q) p.set("q", query.q);
-		if (query.limit != null) p.set("limit", String(query.limit));
-		if (query.offset != null) p.set("offset", String(query.offset));
-		const qs = p.toString();
-		return sd<TicketPage>(`/tickets${qs ? `?${qs}` : ""}`);
+		const q: Record<string, string> = {};
+		if (query.q) q.q = query.q;
+		if (query.limit != null) q.limit = String(query.limit);
+		if (query.offset != null) q.offset = String(query.offset);
+		return unwrap<TicketPage>(client("/tickets", { query: q }));
 	},
 	createTicket: (body: {
 		subject: string;
 		description: string;
 		tags?: string[];
-	}) => sd<Ticket>("/tickets", { method: "POST", body: JSON.stringify(body) }),
-	getTicket: (id: string) => sd<Ticket>(`/tickets/${id}`),
+	}) => unwrap<Ticket>(client("@post/tickets", { body })),
+	getTicket: (id: string) =>
+		unwrap<Ticket>(client("/tickets/:id", { params: { id } })),
 	updateTicket: (
 		id: string,
 		body: {
@@ -100,41 +104,47 @@ export const api = {
 			status?: TicketStatus;
 			assigneeId?: string | null;
 		},
-	) =>
-		sd<Ticket>(`/tickets/${id}`, {
-			method: "PATCH",
-			body: JSON.stringify(body),
-		}),
+	) => unwrap<Ticket>(client("@patch/tickets/:id", { params: { id }, body })),
 	listComments: (id: string) =>
-		sd<{ comments: Comment[]; total: number }>(`/tickets/${id}/comments`),
+		unwrap<{ comments: Comment[]; total: number }>(
+			client("/tickets/:id/comments", { params: { id } }),
+		),
 	addComment: (id: string, body: string, parentId?: string | null) =>
-		sd<Comment>(`/tickets/${id}/comments`, {
-			method: "POST",
-			body: JSON.stringify({ body, parentId: parentId ?? null }),
-		}),
+		unwrap<Comment>(
+			client("@post/tickets/:id/comments", {
+				params: { id },
+				body: { body, parentId: parentId ?? null },
+			}),
+		),
 	setRole: (id: string, role: Role) =>
-		sd<{ id: string; role: Role }>(`/users/${id}/role`, {
-			method: "PATCH",
-			body: JSON.stringify({ role }),
-		}),
+		unwrap<{ id: string; role: Role }>(
+			client("@patch/users/:id/role", { params: { id }, body: { role } }),
+		),
 	// Attachments
 	listAttachments: (id: string) =>
-		sd<{ attachments: Attachment[]; total: number }>(
-			`/tickets/${id}/attachments`,
+		unwrap<{ attachments: Attachment[]; total: number }>(
+			client("/tickets/:id/attachments", { params: { id } }),
 		),
 	uploadAttachment: (id: string, file: File) =>
-		sd<Attachment>(`/tickets/${id}/attachments`, {
-			method: "POST",
-			body: file, // streamed as the raw request body
-			headers: {
-				"x-filename": file.name,
-				"content-type": file.type || "application/octet-stream",
-			},
-		}),
+		unwrap<Attachment>(
+			// The endpoint sets `disableBody`, so its inferred body type is
+			// `undefined`; the file is streamed as the raw request body.
+			client("@post/tickets/:id/attachments", {
+				params: { id },
+				// biome-ignore lint/suspicious/noExplicitAny: raw streamed body
+				body: file as any,
+				headers: {
+					"x-filename": file.name,
+					"content-type": file.type || "application/octet-stream",
+				},
+			}),
+		),
 	deleteAttachment: (id: string, attId: string) =>
-		sd<{ ok: boolean }>(`/tickets/${id}/attachments/${attId}`, {
-			method: "DELETE",
-		}),
+		unwrap<{ ok: boolean }>(
+			client("@delete/tickets/:id/attachments/:attId", {
+				params: { id, attId },
+			}),
+		),
 	downloadUrl: (id: string, attId: string) =>
 		`${BASE}/tickets/${id}/attachments/${attId}`,
 };

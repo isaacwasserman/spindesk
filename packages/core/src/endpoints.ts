@@ -208,7 +208,7 @@ function headersOf(ctx: unknown): Headers {
  * context — done in the handler (not `use`) because futonic's baked middleware
  * runs last, so `serviceCtx` is only guaranteed present once the handler runs.
  */
-export function createServiceDeskEndpoints(
+export function createSpindeskEndpoints(
 	defineEndpoint: DefineServiceDeskEndpoint,
 ) {
 	// biome-ignore lint/suspicious/noExplicitAny: passthrough over defineEndpoint's generic signature

@@ -1,106 +1,16 @@
+## Comments
+Good code requires very few comments. Default to writing no comments at all — well-named identifiers and clear structure should carry the meaning.
 
-Default to using Bun instead of Node.js.
+Acceptable uses:
+- A brief docstring on a function/class when its purpose isn't obvious from its signature.
+- A short inline comment flagging something genuinely non-obvious: a hidden constraint, a workaround for a known bug, a subtle invariant, an ordering requirement.
 
-- Use `bun <file>` instead of `node <file>` or `ts-node <file>`
-- Use `bun test` instead of `jest` or `vitest`
-- Use `bun build <file.html|file.ts|file.css>` instead of `webpack` or `esbuild`
-- Use `bun install` instead of `npm install` or `yarn install` or `pnpm install`
-- Use `bun run <script>` instead of `npm run <script>` or `yarn run <script>` or `pnpm run <script>`
-- Use `bunx <package> <command>` instead of `npx <package> <command>`
-- Bun automatically loads .env, so don't use dotenv.
+Do NOT write:
+- Block comments narrating design decisions, rationale, or change history on edits. That belongs in the PR description and commit message — not the source file.
+- Comments restating what the code already says (`// increment counter` above `counter++`).
+- Comments referencing the current task, ticket, or caller (`// added for the X flow`, `// used by Y`) — they rot the moment the code is reused or refactored.
+- "Removed X" / "Changed Y" tombstones — git history is the source of truth.
+- Numbered step comments narrating the procedure (`// 1. fetch user`, `// 2. validate`, `// 3. save`) — these are tombstones for your own thought process; the code's structure should make the sequence obvious.
+- Multi-paragraph explanations of why one approach was chosen over another.
 
-## APIs
-
-- `Bun.serve()` supports WebSockets, HTTPS, and routes. Don't use `express`.
-- `bun:sqlite` for SQLite. Don't use `better-sqlite3`.
-- `Bun.redis` for Redis. Don't use `ioredis`.
-- `Bun.sql` for Postgres. Don't use `pg` or `postgres.js`.
-- `WebSocket` is built-in. Don't use `ws`.
-- Prefer `Bun.file` over `node:fs`'s readFile/writeFile
-- Bun.$`ls` instead of execa.
-
-## Testing
-
-Use `bun test` to run tests.
-
-```ts#index.test.ts
-import { test, expect } from "bun:test";
-
-test("hello world", () => {
-  expect(1).toBe(1);
-});
-```
-
-## Frontend
-
-Use HTML imports with `Bun.serve()`. Don't use `vite`. HTML imports fully support React, CSS, Tailwind.
-
-Server:
-
-```ts#index.ts
-import index from "./index.html"
-
-Bun.serve({
-  routes: {
-    "/": index,
-    "/api/users/:id": {
-      GET: (req) => {
-        return new Response(JSON.stringify({ id: req.params.id }));
-      },
-    },
-  },
-  // optional websocket support
-  websocket: {
-    open: (ws) => {
-      ws.send("Hello, world!");
-    },
-    message: (ws, message) => {
-      ws.send(message);
-    },
-    close: (ws) => {
-      // handle close
-    }
-  },
-  development: {
-    hmr: true,
-    console: true,
-  }
-})
-```
-
-HTML files can import .tsx, .jsx or .js files directly and Bun's bundler will transpile & bundle automatically. `<link>` tags can point to stylesheets and Bun's CSS bundler will bundle.
-
-```html#index.html
-<html>
-  <body>
-    <h1>Hello, world!</h1>
-    <script type="module" src="./frontend.tsx"></script>
-  </body>
-</html>
-```
-
-With the following `frontend.tsx`:
-
-```tsx#frontend.tsx
-import React from "react";
-import { createRoot } from "react-dom/client";
-
-// import .css files directly and it works
-import './index.css';
-
-const root = createRoot(document.body);
-
-export default function Frontend() {
-  return <h1>Hello, world!</h1>;
-}
-
-root.render(<Frontend />);
-```
-
-Then, run index.ts
-
-```sh
-bun --hot ./index.ts
-```
-
-For more information, read the Bun API docs in `node_modules/bun-types/docs/**.mdx`.
+If a comment is removed and a future reader would still understand the code, the comment shouldn't have been there. If you come across existing comments that violate these rules while working in a file, ask the user whether they can be removed rather than silently deleting them or leaving them in place.
