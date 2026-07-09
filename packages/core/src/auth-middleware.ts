@@ -4,7 +4,7 @@ import type {
 	ServiceDeskConfig,
 	ServiceDeskIdentity,
 	SvcCtx,
-} from "./types";
+} from "./types.js";
 
 /**
  * Resolves the current service-desk identity from a service context and the

@@ -6,13 +6,13 @@ import {
 	sql,
 } from "kysely";
 import { z } from "zod";
-import { requireAgent, resolveIdentity } from "./auth-middleware";
+import { requireAgent, resolveIdentity } from "./auth-middleware.js";
 import {
 	type FilterNode,
 	mentionsArchived,
 	parseLuceneToFilter,
-} from "./filter";
-import { resolveUserNames } from "./names";
+} from "./filter.js";
+import { resolveUserNames } from "./names.js";
 import {
 	type Ctx,
 	DEFAULT_MAX_ATTACHMENT_BYTES,
@@ -21,11 +21,11 @@ import {
 	type ServiceDeskConfig,
 	type SvcCtx,
 	TICKET_STATUS,
-} from "./types";
+} from "./types.js";
 
 /**
  * A flat DB row. futonic's Kysely instance installs a `CamelCasePlugin`, so
- * rows already come back camelCase — the API vocabulary — with no conversion.
+ * rows already come back camelCase the API vocabulary with no conversion.
  */
 type Row = Record<string, unknown>;
 
@@ -685,18 +685,18 @@ export function createSpindeskEndpoints(
 	);
 
 	return {
-		me,
-		listTags,
-		createTicket,
-		listTickets,
-		getTicket,
-		updateTicket,
-		listComments,
-		addComment,
-		setUserRole,
-		uploadAttachment,
-		listAttachments,
-		downloadAttachment,
-		deleteAttachment,
+		me: me,
+		listTags: listTags,
+		createTicket: createTicket,
+		listTickets: listTickets,
+		getTicket: getTicket,
+		updateTicket: updateTicket,
+		listComments: listComments,
+		addComment: addComment,
+		setUserRole: setUserRole,
+		uploadAttachment: uploadAttachment,
+		listAttachments: listAttachments,
+		downloadAttachment: downloadAttachment,
+		deleteAttachment: deleteAttachment,
 	};
 }

@@ -1,4 +1,4 @@
-import type { AuthLike, AuthUser } from "./types";
+import type { AuthLike, AuthUser } from "./types.js";
 
 /**
  * Resolves display names/emails for better-auth user ids by reading better-auth's

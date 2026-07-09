@@ -5,5 +5,8 @@ set -e
 echo "▶ pre-commit: lint"
 bun run lint
 
+echo "▶ pre-commit: types portability (attw)"
+bun run check:exports
+
 echo "▶ pre-commit: changeset status"
-bunx @changesets/cli status --since=origin/main
+env -u GIT_DIR -u GIT_INDEX_FILE -u GIT_WORK_TREE -u GIT_PREFIX bunx @changesets/cli status --since=origin/main
