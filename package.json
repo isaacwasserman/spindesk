@@ -13,6 +13,7 @@
     "build": "bun run --cwd packages/core build",
     "test": "bun run --filter demo test",
     "typecheck": "bun run --cwd packages/core typecheck",
+    "check:exports": "bun run --cwd packages/core check:exports",
     "lint": "bun run --cwd packages/core lint",
     "format": "bun run --cwd packages/core format"
   },
