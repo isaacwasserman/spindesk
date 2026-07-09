@@ -1,0 +1,9 @@
+#!/usr/bin/env sh
+# Managed via package.json "prepare" -> git config core.hooksPath .githooks
+set -e
+
+echo "▶ pre-commit: lint"
+bun run lint
+
+echo "▶ pre-commit: changeset status"
+bunx @changesets/cli status --since=origin/main
