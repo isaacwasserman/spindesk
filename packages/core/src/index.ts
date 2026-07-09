@@ -29,4 +29,4 @@ export const createSpindesk = createFutonicServiceConstructor(
 export type SpindeskArgs = Parameters<typeof createSpindesk>[0];
 
 /** Endpoints type for the type-safe futonic/better-call client. */
-export type SpindeskRouter = ReturnType<typeof createSpindeskEndpoints>;
+export type SpindeskRouter = ReturnType<typeof createSpindesk>["endpoints"];
