@@ -1,12 +1,12 @@
-import { createFutonicServiceConstructor } from "futonic";
+import { createFutonicServiceConstructor, defineService } from "futonic";
 import { z } from "zod";
-import { createSpindeskEndpoints } from "./endpoints";
-import { serviceDeskSchema } from "./schema";
-import type { AuthLike } from "./types";
+import { createSpindeskEndpoints } from "./endpoints.js";
+import { serviceDeskSchema } from "./schema.js";
+import type { AuthLike } from "./types.js";
 
-export type { Role } from "./types";
+export type { Role } from "./types.js";
 
-export const createSpindesk = createFutonicServiceConstructor({
+export const spindeskServiceDefinition = defineService({
 	id: "spindesk",
 	dbSchema: serviceDeskSchema,
 	configSchema: z.object({
@@ -20,6 +20,10 @@ export const createSpindesk = createFutonicServiceConstructor({
 	}),
 	endpoints: (defineEndpoint) => createSpindeskEndpoints(defineEndpoint),
 });
+
+export const createSpindesk = createFutonicServiceConstructor(
+	spindeskServiceDefinition,
+);
 
 /** Options accepted by the service factory (`config` + `database`). */
 export type SpindeskArgs = Parameters<typeof createSpindesk>[0];

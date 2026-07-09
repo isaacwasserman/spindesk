@@ -1,38 +1,26 @@
 import { $ } from "bun";
-import { generateDtsBundle } from "dts-bundle-generator";
 
 console.log("[@spindesk/core] Building...");
 
-await $`rm -rf dist`;
-
+const pkg = await Bun.file("package.json").json();
 const external = [
-	"better-call",
-	"better-call/client",
-	"futonic",
+	...Object.keys(pkg.dependencies ?? {}),
+	...Object.keys(pkg.peerDependencies ?? {}),
 	"futonic/client",
-	"kysely",
-	"liqe",
-	"zod",
+	"better-call/client",
 ];
 
+await $`rm -rf dist`;
+
 await Bun.build({
-	entrypoints: ["src/index.ts", "src/client.ts"],
+	entrypoints: ["src/index.ts", "src/client.ts", "src/drizzle.ts"],
 	outdir: "dist",
 	target: "node",
 	format: "esm",
+	splitting: true,
 	external,
 });
 
-const entries = ["src/index.ts", "src/client.ts"].map((filePath) => ({
-	filePath,
-	output: { noBanner: true, sortNodes: true },
-}));
-
-const [indexDts, clientDts] = generateDtsBundle(entries, {
-	preferredConfigPath: "tsconfig.json",
-});
-
-await Bun.write("dist/index.d.ts", indexDts);
-await Bun.write("dist/client.d.ts", clientDts);
+await $`tsc --emitDeclarationOnly`;
 
 console.log("[@spindesk/core] Build complete.");

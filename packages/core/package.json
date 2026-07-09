@@ -18,13 +18,17 @@
     "./client": {
       "import": "./dist/client.js",
       "types": "./dist/client.d.ts"
+    },
+    "./drizzle": {
+      "import": "./dist/drizzle.js",
+      "types": "./dist/drizzle.d.ts"
     }
   },
   "scripts": {
     "build": "bun run scripts/build.ts",
     "dev": "bun --watch src/index.ts",
     "test": "bun test",
-    "typecheck": "tsgo --noEmit",
+    "typecheck": "tsc --noEmit",
     "check:exports": "bun run build && attw --pack . --profile esm-only",
     "lint": "biome check src/",
     "format": "biome format --write src/"
@@ -37,18 +41,16 @@
     "@arethetypeswrong/cli": "^0.18.4",
     "@biomejs/biome": "^1.9.4",
     "@types/bun": "latest",
-    "@typescript/native-preview": "^7.0.0-dev.20260707.2",
     "better-call": "^2.0.5",
     "drizzle-orm": "^0.45.2",
-    "dts-bundle-generator": "^9.5.1",
-    "futonic": "0.1.1-canary.b70e687",
+    "futonic": "0.1.1-canary.361da31",
     "kysely": "^0.29.3",
-    "typescript": "^5.7.0"
+    "typescript": "^7.0.2"
   },
   "peerDependencies": {
     "better-call": "^2.0.5",
     "drizzle-orm": ">=0.30.0",
-    "futonic": "0.1.1-canary.b70e687",
+    "futonic": "0.1.1-canary.361da31",
     "kysely": "^0.29.3",
     "typescript": "^5"
   },

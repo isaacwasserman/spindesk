@@ -3,7 +3,7 @@ import type {
 	KyselyFromServiceDBSchema,
 	ServiceContext,
 } from "futonic";
-import type { ServiceDeskSchema } from "./schema";
+import type { ServiceDeskSchema } from "./schema.js";
 
 export type Role = "user" | "agent";
 export const TICKET_STATUS = ["open", "pending", "resolved", "closed"] as const;

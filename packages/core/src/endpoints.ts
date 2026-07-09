@@ -6,13 +6,13 @@ import {
 	sql,
 } from "kysely";
 import { z } from "zod";
-import { requireAgent, resolveIdentity } from "./auth-middleware";
+import { requireAgent, resolveIdentity } from "./auth-middleware.js";
 import {
 	type FilterNode,
 	mentionsArchived,
 	parseLuceneToFilter,
-} from "./filter";
-import { resolveUserNames } from "./names";
+} from "./filter.js";
+import { resolveUserNames } from "./names.js";
 import {
 	type Ctx,
 	DEFAULT_MAX_ATTACHMENT_BYTES,
@@ -21,7 +21,7 @@ import {
 	type ServiceDeskConfig,
 	type SvcCtx,
 	TICKET_STATUS,
-} from "./types";
+} from "./types.js";
 
 /**
  * A flat DB row. futonic's Kysely instance installs a `CamelCasePlugin`, so

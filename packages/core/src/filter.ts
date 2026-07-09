@@ -1,6 +1,6 @@
 import { APIError } from "better-call";
 import { type LiqeQuery, type TagToken, parse } from "liqe";
-import { TICKET_STATUS } from "./types";
+import { TICKET_STATUS } from "./types.js";
 
 /**
  * Boolean filter tree the ticket-list endpoint translates into a Kysely
