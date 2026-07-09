@@ -29,20 +29,23 @@
     "format": "biome format --write src/"
   },
   "dependencies": {
-    "better-call": "^2.0.5",
-    "futonic": "0.1.1-canary.b70e687",
-    "kysely": "^0.29.3",
     "liqe": "^3.8.7",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
     "@types/bun": "latest",
+    "better-call": "^2.0.5",
     "drizzle-orm": "^0.45.2",
+    "futonic": "0.1.1-canary.b70e687",
+    "kysely": "^0.29.3",
     "typescript": "^5.7.0"
   },
   "peerDependencies": {
+    "better-call": "^2.0.5",
     "drizzle-orm": ">=0.30.0",
+    "futonic": "0.1.1-canary.b70e687",
+    "kysely": "^0.29.3",
     "typescript": "^5"
   },
   "peerDependenciesMeta": {

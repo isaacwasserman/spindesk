@@ -4,6 +4,8 @@ import { createSpindeskEndpoints } from "./endpoints";
 import { serviceDeskSchema } from "./schema";
 import type { AuthLike } from "./types";
 
+export type { Role } from "./types";
+
 export const createSpindesk = createFutonicServiceConstructor({
 	id: "spindesk",
 	dbSchema: serviceDeskSchema,
