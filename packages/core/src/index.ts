@@ -1,6 +1,6 @@
 import { createFutonicServiceConstructor } from "futonic";
 import { z } from "zod";
-import { createSpindeskEndpoints as createSpindeskEndpoints } from "./endpoints";
+import { createSpindeskEndpoints } from "./endpoints";
 import { serviceDeskSchema } from "./schema";
 import type { AuthLike } from "./types";
 
