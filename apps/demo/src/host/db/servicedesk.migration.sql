@@ -1,10 +1,10 @@
-CREATE TABLE IF NOT EXISTS servicedesk_users (
+CREATE TABLE IF NOT EXISTS spindesk_users (
   id TEXT PRIMARY KEY NOT NULL,
   role TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS servicedesk_tickets (
+CREATE TABLE IF NOT EXISTS spindesk_tickets (
   id TEXT PRIMARY KEY NOT NULL,
   user_id TEXT NOT NULL,
   subject TEXT NOT NULL,
@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS servicedesk_tickets (
   updated_at TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS servicedesk_attachments (
+CREATE TABLE IF NOT EXISTS spindesk_attachments (
   id TEXT PRIMARY KEY NOT NULL,
   ticket_id TEXT NOT NULL,
   filename TEXT NOT NULL,
@@ -26,10 +26,10 @@ CREATE TABLE IF NOT EXISTS servicedesk_attachments (
   data BLOB NOT NULL,
   uploaded_by TEXT NOT NULL,
   created_at TEXT NOT NULL,
-  FOREIGN KEY (ticket_id) REFERENCES servicedesk_tickets(id) ON DELETE CASCADE
+  FOREIGN KEY (ticket_id) REFERENCES spindesk_tickets(id) ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS servicedesk_comments (
+CREATE TABLE IF NOT EXISTS spindesk_comments (
   id TEXT PRIMARY KEY NOT NULL,
   ticket_id TEXT NOT NULL,
   parent_id TEXT,
@@ -37,6 +37,6 @@ CREATE TABLE IF NOT EXISTS servicedesk_comments (
   author_role TEXT NOT NULL,
   body TEXT NOT NULL,
   created_at TEXT NOT NULL,
-  FOREIGN KEY (ticket_id) REFERENCES servicedesk_tickets(id) ON DELETE CASCADE,
-  FOREIGN KEY (parent_id) REFERENCES servicedesk_comments(id) ON DELETE CASCADE
+  FOREIGN KEY (ticket_id) REFERENCES spindesk_tickets(id) ON DELETE CASCADE,
+  FOREIGN KEY (parent_id) REFERENCES spindesk_comments(id) ON DELETE CASCADE
 );

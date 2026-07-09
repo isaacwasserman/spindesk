@@ -1,13 +1,6 @@
 import type { ServiceDBSchema } from "futonic";
 
 /**
- * Service id. futonic prefixes it onto every physical table name (via a runtime
- * `TablePrefixPlugin` on `svc.db`, and in the generated drizzle schema), so
- * these tables land in the host database as `servicedesk_*` with no collisions.
- */
-export const serviceDeskId = "servicedesk";
-
-/**
  * Service-desk database schema (futonic's dialect-agnostic `ServiceDBSchema`).
  *
  * Table and column keys are the logical (camelCase) names endpoints query

@@ -5,11 +5,11 @@
  */
 import { Database } from "bun:sqlite";
 import { getMigrations } from "better-auth/db/migration";
-import { type ServiceDeskArgs, servicedesk } from "@spindesk/core";
+import { createSpindesk, type SpindeskArgs } from "@spindesk/core";
 import { type Auth, createAuth } from "./auth";
 
 /** The raw connection type the service accepts (a Kysely SqliteDatabase, etc). */
-type ServiceConnection = ServiceDeskArgs["database"]["connection"];
+type ServiceConnection = SpindeskArgs["database"]["connection"];
 
 /**
  * Service-desk DDL. futonic no longer generates migrations; the host owns its
@@ -72,7 +72,7 @@ export interface CreateAppOptions {
 }
 
 export interface App {
-	service: ReturnType<typeof servicedesk>;
+	service: ReturnType<typeof createSpindesk>;
 	auth: Auth;
 	mount: string;
 	/** Handle a request: routes /api/auth/* to better-auth, mount/* to the service. */
@@ -104,7 +104,7 @@ export async function createApp(opts: CreateAppOptions = {}): Promise<App> {
 	// it the wrapped connection (provider "sqlite") so SqliteDialect gets reader
 	// detection. It shares the host's connection, so we (not it) close the db on
 	// shutdown. `service.handler` is a web-standard (Request) => Response.
-	const service = servicedesk({
+	const service = createSpindesk({
 		// `wrapBunSqlite` adds the `reader` flag Kysely's SqliteDialect needs at
 		// runtime; the cast bridges bun:sqlite's type to Kysely's SqliteDatabase.
 		database: {

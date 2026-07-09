@@ -1,16 +1,11 @@
 import { createFutonicServiceConstructor } from "futonic";
 import { z } from "zod";
-import { createServiceDeskEndpoints } from "./endpoints";
-import { serviceDeskId, serviceDeskSchema } from "./schema";
+import { createSpindeskEndpoints } from "./endpoints";
+import { serviceDeskSchema } from "./schema";
 import type { AuthLike } from "./types";
 
-/**
- * The service constructor. `endpoints` is a factory: futonic passes a pre-bound
- * `defineEndpoint` whose ServiceContext-injecting middleware is already baked in.
- * `createServiceDeskEndpoints` wraps it to authenticate every endpoint.
- */
-export const createServiceDesk = createFutonicServiceConstructor({
-	id: serviceDeskId,
+export const createSpindesk = createFutonicServiceConstructor({
+	id: "spindesk",
 	dbSchema: serviceDeskSchema,
 	configSchema: z.object({
 		auth: z.custom<AuthLike>((value) => value != null, {
@@ -21,13 +16,11 @@ export const createServiceDesk = createFutonicServiceConstructor({
 		availableTags: z.array(z.string()).optional(),
 		maxAttachmentBytes: z.number().optional(),
 	}),
-	endpoints: (defineEndpoint) => createServiceDeskEndpoints(defineEndpoint),
+	endpoints: (defineEndpoint) => createSpindeskEndpoints(defineEndpoint),
 });
 
 /** Options accepted by the service factory (`config` + `database`). */
-export type ServiceDeskArgs = Parameters<typeof createServiceDesk>[0];
-
-export const servicedesk = (args: ServiceDeskArgs) => createServiceDesk(args);
+export type SpindeskArgs = Parameters<typeof createSpindesk>[0];
 
 /** Endpoints type for the type-safe futonic/better-call client. */
-export type ServiceDeskRouter = ReturnType<typeof createServiceDeskEndpoints>;
+export type SpindeskRouter = ReturnType<typeof createSpindeskEndpoints>;

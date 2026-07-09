@@ -15,9 +15,9 @@
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
     },
-    "./drizzle": {
-      "import": "./dist/drizzle.js",
-      "types": "./dist/drizzle.d.ts"
+    "./client": {
+      "import": "./dist/client.js",
+      "types": "./dist/client.d.ts"
     }
   },
   "scripts": {
@@ -30,7 +30,7 @@
   },
   "dependencies": {
     "better-call": "^2.0.5",
-    "futonic": "0.1.1-canary.75d2b1a",
+    "futonic": "0.1.1-canary.b70e687",
     "kysely": "^0.29.3",
     "liqe": "^3.8.7",
     "zod": "^4.4.3"
