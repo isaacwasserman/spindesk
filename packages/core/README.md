@@ -50,8 +50,8 @@ const service = servicedesk({
 await service.init();
 
 // Pass the mount path as `basePath`; it's stripped before routing.
-const handler = (request: Request) =>
-	service.handler(request, { basePath: "/api/servicedesk" });
+const handler = service.createHandler({ basePath: "/api/servicedesk" });
+const route = (request: Request) => handler.handle(request);
 
 ```
 
