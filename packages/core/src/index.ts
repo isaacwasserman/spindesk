@@ -6,11 +6,12 @@ import type { AuthLike } from "./types.js";
 
 export type { Role } from "./types.js";
 
-// Re-export futonic's public type surface (which itself re-exports the
-// better-call types futonic exposes). This makes every type that appears in
-// `createSpindesk`'s signature nameable to consumers via `@spindesk/core`, so a
-// plain `tsc` build stays portable — no declaration bundling, and no `futonic`
-// or `better-call` peer dependency for consumers.
+// Re-export the type surface consumers must name (via `@spindesk/core`) to stay
+// portable under plain `tsc` — no bundling, no peer deps. `better-call` is
+// re-exported directly, not just via futonic: when the tree holds multiple
+// better-call copies, spindesk's endpoints resolve to its *own* copy, which
+// futonic's re-export wouldn't cover.
+export type * from "better-call";
 export type * from "futonic";
 
 const configSchema = z.object({
