@@ -113,18 +113,11 @@ export async function createApp(opts: CreateAppOptions = {}): Promise<App> {
 		},
 		config: { auth, agentUserIds, availableTags },
 	});
-	const handler = service.handler;
-
 	async function fetch(request: Request): Promise<Response> {
-		const url = new URL(request.url);
-		const { pathname } = url;
+		const { pathname } = new URL(request.url);
 		if (pathname.startsWith("/api/auth")) return auth.handler(request);
 		if (pathname === mount || pathname.startsWith(`${mount}/`)) {
-			// The service router registers un-prefixed paths (e.g. "/tickets")
-			// and has no notion of a mount, so the host strips its own prefix
-			// before dispatching.
-			url.pathname = pathname.slice(mount.length) || "/";
-			return handler(new Request(url, request));
+			return service.handler(request, { basePath: mount });
 		}
 		return new Response(JSON.stringify({ error: "Not found" }), {
 			status: 404,
