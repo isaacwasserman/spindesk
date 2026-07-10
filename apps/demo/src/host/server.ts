@@ -103,7 +103,7 @@ export async function createApp(opts: CreateAppOptions = {}): Promise<App> {
 	// The service opens its own Kysely instance from `database.connection`; hand
 	// it the wrapped connection (provider "sqlite") so SqliteDialect gets reader
 	// detection. It shares the host's connection, so we (not it) close the db on
-	// shutdown. `service.handler` is a web-standard (Request) => Response.
+	// shutdown. `handler.handle` is a web-standard (Request) => Response.
 	const service = createSpindesk({
 		// `wrapBunSqlite` adds the `reader` flag Kysely's SqliteDialect needs at
 		// runtime; the cast bridges bun:sqlite's type to Kysely's SqliteDatabase.
@@ -113,11 +113,12 @@ export async function createApp(opts: CreateAppOptions = {}): Promise<App> {
 		},
 		config: { auth, agentUserIds, availableTags },
 	});
+	const handler = service.createHandler({ basePath: mount });
 	async function fetch(request: Request): Promise<Response> {
 		const { pathname } = new URL(request.url);
 		if (pathname.startsWith("/api/auth")) return auth.handler(request);
 		if (pathname === mount || pathname.startsWith(`${mount}/`)) {
-			return service.handler(request, { basePath: mount });
+			return handler.handle(request);
 		}
 		return new Response(JSON.stringify({ error: "Not found" }), {
 			status: 404,
