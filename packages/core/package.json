@@ -25,7 +25,7 @@
     }
   },
   "scripts": {
-    "build": "tsup && rollup -c rollup.dts.config.mjs",
+    "build": "tsup && tsc --emitDeclarationOnly",
     "dev": "bun --watch src/index.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
@@ -35,7 +35,7 @@
   },
   "dependencies": {
     "better-call": "^2.0.5",
-    "futonic": "0.1.1-canary.a7b3fdb",
+    "futonic": "0.1.1-canary.2eed891",
     "kysely": "^0.29.3",
     "liqe": "^3.8.7",
     "zod": "^4.4.3"
@@ -43,23 +43,15 @@
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.4",
     "@biomejs/biome": "^1.9.4",
-    "@rollup/plugin-node-resolve": "^16.0.0",
     "@types/bun": "latest",
-    "drizzle-orm": "^0.45.2",
-    "rollup": "^4.53.2",
-    "rollup-plugin-dts": "^6.1.1",
     "tsup": "^8.5.0",
     "typescript": "^5.9.0"
   },
   "peerDependencies": {
-    "drizzle-orm": ">=0.30.0",
     "typescript": "^5"
   },
-  "peerDependenciesMeta": {
-    "drizzle-orm": {
-      "optional": true
-    }
-  },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "license": "MIT"
 }

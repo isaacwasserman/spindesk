@@ -122,6 +122,9 @@ function serializeTags(tags: string[]): string | null {
 	return cleaned.length ? JSON.stringify(cleaned) : null;
 }
 function parseTags(value: unknown): string[] {
+	// A `json`/`jsonb` column comes back already parsed (an array); a text column
+	// (or the in-memory serialized value) comes back as a JSON string.
+	if (Array.isArray(value)) return value.filter((t) => typeof t === "string");
 	if (typeof value !== "string" || !value) return [];
 	try {
 		const parsed = JSON.parse(value);
