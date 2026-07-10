@@ -49,7 +49,9 @@ const service = servicedesk({
 
 await service.init();
 
-const handler = (request: Request) => await service.handler(request);
+// Pass the mount path as `basePath`; it's stripped before routing.
+const handler = (request: Request) =>
+	service.handler(request, { basePath: "/api/servicedesk" });
 
 ```
 
