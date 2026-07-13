@@ -546,6 +546,43 @@ describe("service-desk", () => {
 		).toBe(400);
 	});
 
+	test("tickets get monotonic numbers, usable as an alternative key", async () => {
+		const a = await (
+			await post(app, `${MOUNT}/tickets`, H[USER_ID], {
+				subject: "a",
+				description: "d",
+			})
+		).json() as any;
+		const b = await (
+			await post(app, `${MOUNT}/tickets`, H[USER_ID], {
+				subject: "b",
+				description: "d",
+			})
+		).json() as any;
+		expect(a.number).toBe(1);
+		expect(b.number).toBe(2);
+
+		// fetch by number resolves the same ticket as fetching by UUID
+		const byNumber = await (
+			await call(app, `${MOUNT}/tickets/${b.number}`, H[USER_ID])
+		).json() as any;
+		expect(byNumber.id).toBe(b.id);
+
+		// access control still applies to the numeric key
+		expect(
+			(await call(app, `${MOUNT}/tickets/${a.number}`, H[OTHER_ID])).status,
+		).toBe(403);
+
+		// comments addressable by number too
+		await post(app, `${MOUNT}/tickets/${a.number}/comments`, H[USER_ID], {
+			body: "via number",
+		});
+		const comments = await (
+			await call(app, `${MOUNT}/tickets/${a.id}/comments`, H[USER_ID])
+		).json() as any;
+		expect(comments.total).toBe(1);
+	});
+
 	test("missing ticket returns 404", async () => {
 		expect(
 			(await call(app, `${MOUNT}/tickets/nope`, H[AGENT_ID])).status,

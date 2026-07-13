@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS spindesk_users (
 
 CREATE TABLE IF NOT EXISTS spindesk_tickets (
   id TEXT PRIMARY KEY NOT NULL,
+  number INTEGER NOT NULL UNIQUE,
   user_id TEXT NOT NULL,
   subject TEXT NOT NULL,
   description TEXT NOT NULL,

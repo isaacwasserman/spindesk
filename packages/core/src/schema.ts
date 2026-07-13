@@ -28,6 +28,9 @@ export const serviceDeskSchema = {
 			name: "tickets",
 			columns: {
 				id: { type: "string", primaryKey: true },
+				// Monotonic, per-service human-facing key (#1, #2, ...); unique
+				// alternative to the UUID `id`. Assigned on insert.
+				number: { type: "integer" },
 				userId: { type: "string" },
 				subject: { type: "string" },
 				description: { type: "string" },
