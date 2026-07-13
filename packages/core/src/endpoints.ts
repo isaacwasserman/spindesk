@@ -2,6 +2,7 @@ import { APIError } from "better-call";
 import {
 	type Expression,
 	type ExpressionBuilder,
+	type Kysely,
 	type SqlBool,
 	sql,
 } from "kysely";
@@ -24,10 +25,83 @@ import {
 } from "./types.js";
 
 /**
- * A flat DB row. futonic's Kysely instance installs a `CamelCasePlugin`, so
- * rows already come back camelCase the API vocabulary with no conversion.
+ * Row shapes come straight from the typed Kysely instance (`svc.db`), whose
+ * schema futonic derives from `ServiceDeskSchema`. They're the enrich-step
+ * inputs; the response DTOs are the `*Schema` outputs below.
  */
-type Row = Record<string, unknown>;
+type DB = SvcCtx["db"] extends Kysely<infer S> ? S : never;
+type TicketRow = DB["tickets"];
+type CommentRow = DB["comments"];
+
+/**
+ * Endpoint response schemas. Each is attached to its endpoint via `output`,
+ * which drives the OpenAPI `200` body, the typed client's result type, and a
+ * compile-time check on the handler's return value.
+ */
+const roleSchema = z.enum(["user", "agent"]);
+
+const ticketSchema = z.object({
+	id: z.string(),
+	userId: z.string(),
+	userName: z.string().nullable(),
+	subject: z.string(),
+	description: z.string(),
+	status: z.string(),
+	assigneeId: z.string().nullable(),
+	assigneeName: z.string().nullable(),
+	tags: z.array(z.string()),
+	archivedAt: z.string().nullable(),
+	createdAt: z.string(),
+	updatedAt: z.string(),
+});
+
+const commentSchema = z.object({
+	id: z.string(),
+	ticketId: z.string(),
+	parentId: z.string().nullable(),
+	authorId: z.string(),
+	authorName: z.string().nullable(),
+	authorRole: z.string(),
+	body: z.string(),
+	createdAt: z.string(),
+});
+
+const attachmentSchema = z.object({
+	id: z.string(),
+	ticketId: z.string(),
+	filename: z.string(),
+	contentType: z.string(),
+	size: z.number(),
+	uploadedBy: z.string(),
+	createdAt: z.string(),
+});
+
+const meSchema = z.object({
+	id: z.string(),
+	role: roleSchema,
+	name: z.string().nullable(),
+});
+const ticketPageSchema = z.object({
+	tickets: z.array(ticketSchema),
+	total: z.number(),
+	limit: z.number(),
+	offset: z.number(),
+});
+const commentListSchema = z.object({
+	comments: z.array(commentSchema),
+	total: z.number(),
+});
+const attachmentListSchema = z.object({
+	attachments: z.array(attachmentSchema),
+	total: z.number(),
+});
+const roleUpdateSchema = z.object({ id: z.string(), role: roleSchema });
+const tagsSchema = z.object({ tags: z.array(z.string()) });
+const okSchema = z.object({ ok: z.boolean() });
+
+export type Ticket = z.infer<typeof ticketSchema>;
+export type Comment = z.infer<typeof commentSchema>;
+export type Attachment = z.infer<typeof attachmentSchema>;
 
 function configOf(svc: SvcCtx): ServiceDeskConfig {
 	return svc.config as unknown as ServiceDeskConfig;
@@ -147,34 +221,39 @@ function validateTags(svc: SvcCtx, tags: string[]): void {
 }
 
 /** Attach live owner/assignee display names (from better-auth) + tags array to tickets. */
-async function enrichTickets(svc: SvcCtx, tickets: Row[]): Promise<Row[]> {
+async function enrichTickets(
+	svc: SvcCtx,
+	tickets: TicketRow[],
+): Promise<Ticket[]> {
 	const names = await resolveUserNames(
 		authOf(svc),
-		tickets.flatMap((t) => [t.userId as string, t.assigneeId as string | null]),
+		tickets.flatMap((t) => [t.userId, t.assigneeId]),
 	);
 	return tickets.map((t) => ({
 		...t,
 		tags: parseTags(t.tags),
-		userName: names.get(t.userId as string)?.name ?? null,
-		assigneeName: t.assigneeId
-			? (names.get(t.assigneeId as string)?.name ?? null)
-			: null,
+		userName: names.get(t.userId)?.name ?? null,
+		assigneeName: t.assigneeId ? (names.get(t.assigneeId)?.name ?? null) : null,
 	}));
 }
 
-async function enrichTicket(svc: SvcCtx, ticket: Row): Promise<Row> {
-	return (await enrichTickets(svc, [ticket]))[0] as Row;
+async function enrichTicket(svc: SvcCtx, ticket: TicketRow): Promise<Ticket> {
+	const [enriched] = await enrichTickets(svc, [ticket]);
+	return enriched as Ticket;
 }
 
 /** Attach live author display names (from better-auth) to comments. */
-async function enrichComments(svc: SvcCtx, comments: Row[]): Promise<Row[]> {
+async function enrichComments(
+	svc: SvcCtx,
+	comments: CommentRow[],
+): Promise<Comment[]> {
 	const names = await resolveUserNames(
 		authOf(svc),
-		comments.map((c) => c.authorId as string),
+		comments.map((c) => c.authorId),
 	);
 	return comments.map((c) => ({
 		...c,
-		authorName: names.get(c.authorId as string)?.name ?? null,
+		authorName: names.get(c.authorId)?.name ?? null,
 	}));
 }
 
@@ -195,7 +274,7 @@ async function getAccessibleTicket(ctx: Ctx["context"], id: string) {
 	if (serviceDesk.role !== "agent" && ticket.userId !== serviceDesk.userId) {
 		throw new APIError("FORBIDDEN", { message: "Not your ticket" });
 	}
-	return ticket as Row;
+	return ticket;
 }
 
 /** Extract request headers from a better-call endpoint context. */
@@ -226,15 +305,19 @@ export function createSpindeskEndpoints(
 		})) as unknown as DefineServiceDeskEndpoint;
 
 	/** Current user's service-desk profile — lets the host UI branch on role. */
-	const me = createEndpoint("/me", { method: "GET" }, async (ctx) => {
-		const { serviceCtx: svc, serviceDesk } = (ctx as unknown as Ctx).context;
-		const names = await resolveUserNames(authOf(svc), [serviceDesk.userId]);
-		return {
-			id: serviceDesk.userId,
-			role: serviceDesk.role,
-			name: names.get(serviceDesk.userId)?.name ?? null,
-		};
-	});
+	const me = createEndpoint(
+		"/me",
+		{ method: "GET", output: meSchema },
+		async (ctx) => {
+			const { serviceCtx: svc, serviceDesk } = (ctx as unknown as Ctx).context;
+			const names = await resolveUserNames(authOf(svc), [serviceDesk.userId]);
+			return {
+				id: serviceDesk.userId,
+				role: serviceDesk.role,
+				name: names.get(serviceDesk.userId)?.name ?? null,
+			};
+		},
+	);
 
 	const createTicket = createEndpoint(
 		"/tickets",
@@ -245,6 +328,7 @@ export function createSpindeskEndpoints(
 				description: z.string().min(1),
 				tags: z.array(z.string()).optional(),
 			}),
+			output: ticketSchema,
 		},
 		async (ctx) => {
 			const { serviceCtx: svc, serviceDesk } = (ctx as unknown as Ctx).context;
@@ -271,18 +355,25 @@ export function createSpindeskEndpoints(
 
 	const listTickets = createEndpoint(
 		"/tickets",
-		{ method: "GET" },
+		{
+			method: "GET",
+			query: z.object({
+				q: z.string().optional(),
+				limit: z.string().optional(),
+				offset: z.string().optional(),
+			}),
+			output: ticketPageSchema,
+		},
 		async (ctx) => {
 			const { serviceCtx: svc, serviceDesk } = (ctx as unknown as Ctx).context;
-			const url = new URL((ctx.request as Request).url);
-			const q = url.searchParams.get("q") ?? "";
+			const q = ctx.query?.q ?? "";
 
 			// Pagination.
 			const limit = Math.min(
-				Math.max(Number(url.searchParams.get("limit")) || DEFAULT_LIMIT, 1),
+				Math.max(Number(ctx.query?.limit) || DEFAULT_LIMIT, 1),
 				MAX_LIMIT,
 			);
-			const offset = Math.max(Number(url.searchParams.get("offset")) || 0, 0);
+			const offset = Math.max(Number(ctx.query?.offset) || 0, 0);
 
 			// Compose the filter tree: mandatory ownership scoping + a default
 			// "hide archived" clause + the user's Lucene query. Ownership can't
@@ -314,11 +405,11 @@ export function createSpindeskEndpoints(
 				);
 			}
 
-			const tickets = (await listQuery
+			const tickets = await listQuery
 				.orderBy("createdAt", "desc")
 				.limit(limit)
 				.offset(offset)
-				.execute()) as Row[];
+				.execute();
 			const countRow = await countQuery.executeTakeFirst();
 			const total = Number(countRow?.count ?? 0);
 			return {
@@ -332,7 +423,7 @@ export function createSpindeskEndpoints(
 
 	const getTicket = createEndpoint(
 		"/tickets/:id",
-		{ method: "GET" },
+		{ method: "GET", output: ticketSchema },
 		async (ctx) => {
 			const context = (ctx as unknown as Ctx).context;
 			const { id } = ctx.params as { id: string };
@@ -355,6 +446,7 @@ export function createSpindeskEndpoints(
 				status: z.enum(TICKET_STATUS).optional(),
 				assigneeId: z.string().nullable().optional(),
 			}),
+			output: ticketSchema,
 		},
 		async (ctx) => {
 			const context = (ctx as unknown as Ctx).context;
@@ -364,7 +456,7 @@ export function createSpindeskEndpoints(
 			const isAgent = serviceDesk.role === "agent";
 			const isOwner = ticket.userId === serviceDesk.userId;
 
-			const data: Row = {};
+			const data: Partial<TicketRow> = {};
 
 			// Author (or agent) may edit content, tags, and archive state.
 			const editsContent =
@@ -415,21 +507,21 @@ export function createSpindeskEndpoints(
 			data.updatedAt = new Date().toISOString();
 			await svc.db
 				.updateTable("tickets")
-				.set(data as never)
+				.set(data)
 				.where("id", "=", id)
 				.execute();
-			const updated = (await svc.db
+			const updated = await svc.db
 				.selectFrom("tickets")
 				.selectAll()
 				.where("id", "=", id)
-				.executeTakeFirstOrThrow()) as Row;
+				.executeTakeFirstOrThrow();
 			return await enrichTicket(svc, updated);
 		},
 	);
 
 	const listComments = createEndpoint(
 		"/tickets/:id/comments",
-		{ method: "GET" },
+		{ method: "GET", output: commentListSchema },
 		async (ctx) => {
 			const context = (ctx as unknown as Ctx).context;
 			const { serviceCtx: svc } = context;
@@ -437,12 +529,12 @@ export function createSpindeskEndpoints(
 			await getAccessibleTicket(context, id); // authorize
 			// Flat, chronological list; the client assembles the reply tree
 			// from each comment's `parentId`.
-			const comments = (await svc.db
+			const comments = await svc.db
 				.selectFrom("comments")
 				.selectAll()
 				.where("ticketId", "=", id)
 				.orderBy("createdAt", "asc")
-				.execute()) as Row[];
+				.execute();
 			return {
 				comments: await enrichComments(svc, comments),
 				total: comments.length,
@@ -458,6 +550,7 @@ export function createSpindeskEndpoints(
 				body: z.string().min(1),
 				parentId: z.string().nullable().optional(),
 			}),
+			output: commentSchema,
 		},
 		async (ctx) => {
 			const context = (ctx as unknown as Ctx).context;
@@ -497,7 +590,8 @@ export function createSpindeskEndpoints(
 				.set({ updatedAt: now })
 				.where("id", "=", id)
 				.execute();
-			return (await enrichComments(svc, [comment]))[0] as Row;
+			const [enriched] = await enrichComments(svc, [comment]);
+			return enriched as Comment;
 		},
 	);
 
@@ -507,6 +601,7 @@ export function createSpindeskEndpoints(
 		{
 			method: "PATCH",
 			body: z.object({ role: z.enum(["user", "agent"]) }),
+			output: roleUpdateSchema,
 		},
 		async (ctx) => {
 			const { serviceCtx: svc, serviceDesk } = (ctx as unknown as Ctx).context;
@@ -536,10 +631,14 @@ export function createSpindeskEndpoints(
 	);
 
 	/** Available tag vocabulary, for the host UI's tag picker. */
-	const listTags = createEndpoint("/tags", { method: "GET" }, async (ctx) => {
-		const { serviceCtx: svc } = (ctx as unknown as Ctx).context;
-		return { tags: configOf(svc).availableTags ?? [] };
-	});
+	const listTags = createEndpoint(
+		"/tags",
+		{ method: "GET", output: tagsSchema },
+		async (ctx) => {
+			const { serviceCtx: svc } = (ctx as unknown as Ctx).context;
+			return { tags: configOf(svc).availableTags ?? [] };
+		},
+	);
 
 	/**
 	 * Streamed file upload. `disableBody` stops better-call from buffering the
@@ -548,7 +647,12 @@ export function createSpindeskEndpoints(
 	 */
 	const uploadAttachment = createEndpoint(
 		"/tickets/:id/attachments",
-		{ method: "POST", disableBody: true, requireRequest: true },
+		{
+			method: "POST",
+			disableBody: true,
+			requireRequest: true,
+			output: attachmentSchema,
+		},
 		async (ctx) => {
 			const context = (ctx as unknown as Ctx).context;
 			const { serviceCtx: svc, serviceDesk } = context;
@@ -614,7 +718,7 @@ export function createSpindeskEndpoints(
 
 	const listAttachments = createEndpoint(
 		"/tickets/:id/attachments",
-		{ method: "GET" },
+		{ method: "GET", output: attachmentListSchema },
 		async (ctx) => {
 			const context = (ctx as unknown as Ctx).context;
 			const { serviceCtx: svc } = context;
@@ -663,7 +767,7 @@ export function createSpindeskEndpoints(
 
 	const deleteAttachment = createEndpoint(
 		"/tickets/:id/attachments/:attId",
-		{ method: "DELETE" },
+		{ method: "DELETE", output: okSchema },
 		async (ctx) => {
 			const context = (ctx as unknown as Ctx).context;
 			const { serviceCtx: svc, serviceDesk } = context;
