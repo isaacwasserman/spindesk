@@ -113,7 +113,25 @@ export async function createApp(opts: CreateAppOptions = {}): Promise<App> {
 		},
 		config: { auth, agentUserIds, availableTags },
 	});
-	const handler = service.createHandler({ basePath: mount });
+	const handler = service.createHandler({
+		basePath: mount,
+		openApi: {
+			info: {
+				title: "Spindesk Service Desk",
+				version: "0.1.0",
+				description: "Ticketing API for the Spindesk demo host.",
+			},
+			servers: [{ url: mount }],
+			securitySchemes: {
+				sessionCookie: {
+					type: "apiKey",
+					in: "cookie",
+					name: "better-auth.session_token",
+				},
+			},
+			security: [{ sessionCookie: [] }],
+		},
+	});
 	async function fetch(request: Request): Promise<Response> {
 		const { pathname } = new URL(request.url);
 		if (pathname.startsWith("/api/auth")) return auth.handler(request);

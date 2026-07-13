@@ -46,7 +46,7 @@ const ticketSchema = z.object({
 	userName: z.string().nullable(),
 	subject: z.string(),
 	description: z.string(),
-	status: z.string(),
+	status: z.enum(TICKET_STATUS),
 	assigneeId: z.string().nullable(),
 	assigneeName: z.string().nullable(),
 	tags: z.array(z.string()),
@@ -61,7 +61,7 @@ const commentSchema = z.object({
 	parentId: z.string().nullable(),
 	authorId: z.string(),
 	authorName: z.string().nullable(),
-	authorRole: z.string(),
+	authorRole: roleSchema,
 	body: z.string(),
 	createdAt: z.string(),
 });
@@ -231,6 +231,7 @@ async function enrichTickets(
 	);
 	return tickets.map((t) => ({
 		...t,
+		status: t.status as Ticket["status"],
 		tags: parseTags(t.tags),
 		userName: names.get(t.userId)?.name ?? null,
 		assigneeName: t.assigneeId ? (names.get(t.assigneeId)?.name ?? null) : null,
@@ -253,6 +254,7 @@ async function enrichComments(
 	);
 	return comments.map((c) => ({
 		...c,
+		authorRole: c.authorRole as Comment["authorRole"],
 		authorName: names.get(c.authorId)?.name ?? null,
 	}));
 }
