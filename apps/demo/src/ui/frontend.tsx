@@ -3,10 +3,11 @@ import { createRoot } from "react-dom/client";
 import "./index.css";
 import { FilterBar } from "./FilterBar";
 import {
-	api,
 	type Attachment,
 	authClient,
+	client,
 	type Comment,
+	downloadUrl,
 	type Role,
 	type Ticket,
 	type TicketStatus,
@@ -18,7 +19,7 @@ const PAGE_SIZE = 10;
 function useAvailableTags(): string[] {
 	const [tags, setTags] = useState<string[]>([]);
 	useEffect(() => {
-		api.tags().then((r) => setTags(r.tags)).catch(() => {});
+		client("/tags").then((r) => setTags(r.tags)).catch(() => {});
 	}, []);
 	return tags;
 }
@@ -226,7 +227,9 @@ function NewTicket({
 			onSubmit={(e) => {
 				e.preventDefault();
 				run(async () => {
-					await api.createTicket({ subject, description, tags });
+					await client("@post/tickets", {
+						body: { subject, description, tags },
+					});
 					setSubject("");
 					setDescription("");
 					setTags([]);
@@ -277,10 +280,8 @@ function TicketList({
 
 	const load = () =>
 		run(async () => {
-			const page = await api.listTickets({
-				q: query,
-				limit: PAGE_SIZE,
-				offset,
+			const page = await client("/tickets", {
+				query: { q: query, limit: String(PAGE_SIZE), offset: String(offset) },
 			});
 			setTickets(page.tickets);
 			setTotal(page.total);
@@ -362,7 +363,9 @@ function Attachments({
 
 	const load = () =>
 		run(async () => {
-			const { attachments } = await api.listAttachments(ticketId);
+			const { attachments } = await client("/tickets/:id/attachments", {
+				params: { id: ticketId },
+			});
 			setItems(attachments);
 		});
 
@@ -377,7 +380,15 @@ function Attachments({
 		if (!file) return;
 		setBusy(true);
 		run(async () => {
-			await api.uploadAttachment(ticketId, file);
+			await client("@post/tickets/:id/attachments", {
+				params: { id: ticketId },
+				// biome-ignore lint/suspicious/noExplicitAny: raw streamed body (endpoint sets `disableBody`)
+				body: file as any,
+				headers: {
+					"x-filename": file.name,
+					"content-type": file.type || "application/octet-stream",
+				},
+			});
 			await load();
 		}).finally(() => setBusy(false));
 	};
@@ -402,7 +413,7 @@ function Attachments({
 			{error && <p className="err">{error}</p>}
 			{items.map((a) => (
 				<div className="row spread" key={a.id}>
-					<a href={api.downloadUrl(ticketId, a.id)} download>
+					<a href={downloadUrl(ticketId, a.id)} download>
 						{a.filename}
 					</a>
 					<span className="muted">
@@ -414,7 +425,9 @@ function Attachments({
 								style={{ marginLeft: 8 }}
 								onClick={() =>
 									run(async () => {
-										await api.deleteAttachment(ticketId, a.id);
+										await client("@delete/tickets/:id/attachments/:attId", {
+											params: { id: ticketId, attId: a.id },
+										});
 										await load();
 									})
 								}
@@ -460,8 +473,8 @@ function TicketDetail({
 	const load = () =>
 		run(async () => {
 			const [t, c] = await Promise.all([
-				api.getTicket(id),
-				api.listComments(id),
+				client("/tickets/:id", { params: { id } }),
+				client("/tickets/:id/comments", { params: { id } }),
 			]);
 			setTicket(t);
 			setComments(c.comments);
@@ -493,7 +506,7 @@ function TicketDetail({
 
 	const setStatus = (status: TicketStatus) =>
 		run(async () => {
-			await api.updateTicket(id, { status });
+			await client("@patch/tickets/:id", { params: { id }, body: { status } });
 			await load();
 		});
 
@@ -505,17 +518,23 @@ function TicketDetail({
 
 	const saveEdit = () =>
 		run(async () => {
-			await api.updateTicket(id, {
-				subject: editSubject,
-				description: editDescription,
-				tags: editTags,
+			await client("@patch/tickets/:id", {
+				params: { id },
+				body: {
+					subject: editSubject,
+					description: editDescription,
+					tags: editTags,
+				},
 			});
 			setEditing(false);
 			await load();
 		});
 	const toggleArchive = () =>
 		run(async () => {
-			await api.updateTicket(id, { archived: !ticket.archivedAt });
+			await client("@patch/tickets/:id", {
+				params: { id },
+				body: { archived: !ticket.archivedAt },
+			});
 			await load();
 		});
 
@@ -600,8 +619,9 @@ function TicketDetail({
 						<button
 							onClick={() =>
 								run(async () => {
-									await api.updateTicket(id, {
-										assigneeId: assignee || null,
+									await client("@patch/tickets/:id", {
+										params: { id },
+										body: { assigneeId: assignee || null },
 									});
 									await load();
 								})
@@ -629,7 +649,10 @@ function TicketDetail({
 				onSubmit={(e) => {
 					e.preventDefault();
 					run(async () => {
-						await api.addComment(id, body, replyTo?.id ?? null);
+						await client("@post/tickets/:id/comments", {
+							params: { id },
+							body: { body, parentId: replyTo?.id ?? null },
+						});
 						setBody("");
 						setReplyTo(null);
 						await load();
@@ -681,7 +704,10 @@ function AgentAdmin() {
 					e.preventDefault();
 					setMsg(null);
 					run(async () => {
-						const r = await api.setRole(userId, role);
+						const r = await client("@patch/users/:id/role", {
+							params: { id: userId },
+							body: { role },
+						});
 						setMsg(`${r.id} is now ${r.role}`);
 					});
 				}}
@@ -722,7 +748,7 @@ function Dashboard({ email }: { email: string }) {
 	const availableTags = useAvailableTags();
 
 	useEffect(() => {
-		api.me().then(setMe).catch(() => setMe(null));
+		client("/me").then(setMe).catch(() => setMe(null));
 	}, []);
 
 	if (!me) return <div className="app">Loading…</div>;
