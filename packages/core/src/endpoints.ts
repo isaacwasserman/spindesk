@@ -42,6 +42,7 @@ const roleSchema = z.enum(["user", "agent"]);
 
 const ticketSchema = z.object({
 	id: z.string(),
+	number: z.number(),
 	userId: z.string(),
 	userName: z.string().nullable(),
 	subject: z.string(),
@@ -260,16 +261,17 @@ async function enrichComments(
 }
 
 /**
- * Loads a ticket by id and enforces read access: agents see everything, users
- * only their own. Throws 404/403 as appropriate.
+ * Loads a ticket by its UUID `id` or its monotonic `number` (an all-digit key)
+ * and enforces read access: agents see everything, users only their own. Throws
+ * 404/403 as appropriate.
  */
-async function getAccessibleTicket(ctx: Ctx["context"], id: string) {
+async function getAccessibleTicket(ctx: Ctx["context"], idOrNumber: string) {
 	const { serviceCtx: svc, serviceDesk } = ctx;
-	const ticket = await svc.db
-		.selectFrom("tickets")
-		.selectAll()
-		.where("id", "=", id)
-		.executeTakeFirst();
+	const base = svc.db.selectFrom("tickets").selectAll();
+	const ticket = await (/^\d+$/.test(idOrNumber)
+		? base.where("number", "=", Number(idOrNumber))
+		: base.where("id", "=", idOrNumber)
+	).executeTakeFirst();
 	if (!ticket) {
 		throw new APIError("NOT_FOUND", { message: "Ticket not found" });
 	}
@@ -337,20 +339,31 @@ export function createSpindeskEndpoints(
 			const tags = ctx.body.tags ?? [];
 			validateTags(svc, tags);
 			const now = new Date().toISOString();
-			const ticket = {
-				id: crypto.randomUUID(),
-				userId: serviceDesk.userId,
-				subject: ctx.body.subject,
-				description: ctx.body.description,
-				status: "open",
-				assigneeId: null,
-				tags: serializeTags(tags),
-				archivedAt: null,
-				createdAt: now,
-				updatedAt: now,
-			};
-			await svc.db.insertInto("tickets").values(ticket).execute();
-			svc.logger.info(`Ticket created: ${ticket.id}`);
+			// Read the current max and insert atomically so concurrent creates
+			// can't hand out the same number.
+			const ticket = await svc.db.transaction().execute(async (trx) => {
+				const row = await trx
+					.selectFrom("tickets")
+					.select((eb) => eb.fn.max("number").as("max"))
+					.executeTakeFirst();
+				const next = Number(row?.max ?? 0) + 1;
+				const t = {
+					id: crypto.randomUUID(),
+					number: next,
+					userId: serviceDesk.userId,
+					subject: ctx.body.subject,
+					description: ctx.body.description,
+					status: "open",
+					assigneeId: null,
+					tags: serializeTags(tags),
+					archivedAt: null,
+					createdAt: now,
+					updatedAt: now,
+				};
+				await trx.insertInto("tickets").values(t).execute();
+				return t;
+			});
+			svc.logger.info(`Ticket created: ${ticket.id} (#${ticket.number})`);
 			return await enrichTicket(svc, ticket);
 		},
 	);
@@ -510,12 +523,12 @@ export function createSpindeskEndpoints(
 			await svc.db
 				.updateTable("tickets")
 				.set(data)
-				.where("id", "=", id)
+				.where("id", "=", ticket.id)
 				.execute();
 			const updated = await svc.db
 				.selectFrom("tickets")
 				.selectAll()
-				.where("id", "=", id)
+				.where("id", "=", ticket.id)
 				.executeTakeFirstOrThrow();
 			return await enrichTicket(svc, updated);
 		},
@@ -528,13 +541,13 @@ export function createSpindeskEndpoints(
 			const context = (ctx as unknown as Ctx).context;
 			const { serviceCtx: svc } = context;
 			const { id } = ctx.params as { id: string };
-			await getAccessibleTicket(context, id); // authorize
+			const ticket = await getAccessibleTicket(context, id); // authorize
 			// Flat, chronological list; the client assembles the reply tree
 			// from each comment's `parentId`.
 			const comments = await svc.db
 				.selectFrom("comments")
 				.selectAll()
-				.where("ticketId", "=", id)
+				.where("ticketId", "=", ticket.id)
 				.orderBy("createdAt", "asc")
 				.execute();
 			return {
@@ -558,7 +571,7 @@ export function createSpindeskEndpoints(
 			const context = (ctx as unknown as Ctx).context;
 			const { serviceCtx: svc, serviceDesk } = context;
 			const { id } = ctx.params as { id: string };
-			await getAccessibleTicket(context, id); // authorize
+			const ticket = await getAccessibleTicket(context, id); // authorize
 
 			// A reply must target an existing comment on the same ticket.
 			const parentId = ctx.body.parentId ?? null;
@@ -568,7 +581,7 @@ export function createSpindeskEndpoints(
 					.selectAll()
 					.where("id", "=", parentId)
 					.executeTakeFirst();
-				if (!parent || parent.ticketId !== id) {
+				if (!parent || parent.ticketId !== ticket.id) {
 					throw new APIError("BAD_REQUEST", {
 						message: "Invalid parent comment",
 					});
@@ -578,7 +591,7 @@ export function createSpindeskEndpoints(
 			const now = new Date().toISOString();
 			const comment = {
 				id: crypto.randomUUID(),
-				ticketId: id,
+				ticketId: ticket.id,
 				parentId,
 				authorId: serviceDesk.userId,
 				authorRole: serviceDesk.role,
@@ -590,7 +603,7 @@ export function createSpindeskEndpoints(
 			await svc.db
 				.updateTable("tickets")
 				.set({ updatedAt: now })
-				.where("id", "=", id)
+				.where("id", "=", ticket.id)
 				.execute();
 			const [enriched] = await enrichComments(svc, [comment]);
 			return enriched as Comment;
@@ -659,7 +672,7 @@ export function createSpindeskEndpoints(
 			const context = (ctx as unknown as Ctx).context;
 			const { serviceCtx: svc, serviceDesk } = context;
 			const { id } = ctx.params as { id: string };
-			await getAccessibleTicket(context, id);
+			const ticket = await getAccessibleTicket(context, id);
 
 			const req = ctx.request as Request;
 			const max =
@@ -703,7 +716,7 @@ export function createSpindeskEndpoints(
 
 			const row = {
 				id: crypto.randomUUID(),
-				ticketId: id,
+				ticketId: ticket.id,
 				filename,
 				contentType,
 				size,
@@ -725,12 +738,12 @@ export function createSpindeskEndpoints(
 			const context = (ctx as unknown as Ctx).context;
 			const { serviceCtx: svc } = context;
 			const { id } = ctx.params as { id: string };
-			await getAccessibleTicket(context, id);
+			const ticket = await getAccessibleTicket(context, id);
 			// Metadata only — never load the blobs to list them.
 			const rows = await svc.db
 				.selectFrom("attachments")
 				.select([...ATTACHMENT_META])
-				.where("ticketId", "=", id)
+				.where("ticketId", "=", ticket.id)
 				.orderBy("createdAt", "asc")
 				.execute();
 			return { attachments: rows, total: rows.length };
@@ -744,13 +757,13 @@ export function createSpindeskEndpoints(
 			const context = (ctx as unknown as Ctx).context;
 			const { serviceCtx: svc } = context;
 			const { id, attId } = ctx.params as { id: string; attId: string };
-			await getAccessibleTicket(context, id);
+			const ticket = await getAccessibleTicket(context, id);
 			const row = await svc.db
 				.selectFrom("attachments")
 				.selectAll()
 				.where("id", "=", attId)
 				.executeTakeFirst();
-			if (!row || row.ticketId !== id) {
+			if (!row || row.ticketId !== ticket.id) {
 				throw new APIError("NOT_FOUND", { message: "Attachment not found" });
 			}
 			const raw = row.data as Uint8Array | ArrayBufferLike;
@@ -780,7 +793,7 @@ export function createSpindeskEndpoints(
 				.selectAll()
 				.where("id", "=", attId)
 				.executeTakeFirst();
-			if (!row || row.ticketId !== id) {
+			if (!row || row.ticketId !== ticket.id) {
 				throw new APIError("NOT_FOUND", { message: "Attachment not found" });
 			}
 			const isAgent = serviceDesk.role === "agent";
