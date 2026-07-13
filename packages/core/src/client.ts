@@ -1,8 +1,10 @@
-import { createClient } from "futonic/client";
+import { createClient } from "better-call/client";
 import type { SpindeskRouter } from "./index.js";
+
+export type SpindeskClient = ReturnType<typeof createClient<SpindeskRouter>>;
 
 export function createSpindeskClient(
 	options: Parameters<typeof createClient>[0],
-): ReturnType<typeof createClient<SpindeskRouter>> {
+): SpindeskClient {
 	return createClient<SpindeskRouter>(options);
 }
