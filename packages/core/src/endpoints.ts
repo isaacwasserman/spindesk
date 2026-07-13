@@ -3,6 +3,7 @@ import {
 	type Expression,
 	type ExpressionBuilder,
 	type Kysely,
+	PostgresAdapter,
 	type SqlBool,
 	sql,
 } from "kysely";
@@ -136,22 +137,32 @@ function ticketFilterExpression(
 	// biome-ignore lint/suspicious/noExplicitAny: builder over a dynamic column set
 	eb: ExpressionBuilder<any, any>,
 	node: FilterNode,
+	castText: boolean,
 ): Expression<SqlBool> {
 	switch (node.type) {
 		case "and": {
-			const parts = node.nodes.map((n) => ticketFilterExpression(eb, n));
+			const parts = node.nodes.map((n) =>
+				ticketFilterExpression(eb, n, castText),
+			);
 			return parts.length ? eb.and(parts) : ALWAYS_TRUE;
 		}
 		case "or": {
-			const parts = node.nodes.map((n) => ticketFilterExpression(eb, n));
+			const parts = node.nodes.map((n) =>
+				ticketFilterExpression(eb, n, castText),
+			);
 			return parts.length ? eb.or(parts) : ALWAYS_TRUE;
 		}
 		case "not":
-			return eb.not(ticketFilterExpression(eb, node.node));
+			return eb.not(ticketFilterExpression(eb, node.node, castText));
 		case "cond": {
 			// biome-ignore lint/suspicious/noExplicitAny: dynamic column ref
 			const field = node.field as any;
 			const value = node.value;
+			// On Postgres, `tags` is jsonb and has no `LIKE` operator; cast the
+			// operand to text so substring matching works across all dialects.
+			const likeField = castText
+				? sql`${eb.ref(field)}::text`
+				: (field as Expression<string>);
 			switch (node.op) {
 				case "eq":
 					return eb(field, "=", value);
@@ -170,11 +181,11 @@ function ticketFilterExpression(
 				case "not_in":
 					return eb(field, "not in", value as unknown[]);
 				case "contains":
-					return eb(field, "like", `%${value}%`);
+					return eb(likeField, "like", `%${value}%`);
 				case "startsWith":
-					return eb(field, "like", `${value}%`);
+					return eb(likeField, "like", `${value}%`);
 				case "endsWith":
-					return eb(field, "like", `%${value}`);
+					return eb(likeField, "like", `%${value}`);
 				case "isNull":
 					return eb(field, "is", null);
 				case "isNotNull":
@@ -414,9 +425,13 @@ export function createSpindeskEndpoints(
 				.selectFrom("tickets")
 				.select((eb) => eb.fn.countAll().as("count"));
 			if (hasClauses(filter)) {
-				listQuery = listQuery.where((eb) => ticketFilterExpression(eb, filter));
+				const castText =
+					svc.db.getExecutor().adapter instanceof PostgresAdapter;
+				listQuery = listQuery.where((eb) =>
+					ticketFilterExpression(eb, filter, castText),
+				);
 				countQuery = countQuery.where((eb) =>
-					ticketFilterExpression(eb, filter),
+					ticketFilterExpression(eb, filter, castText),
 				);
 			}
 
