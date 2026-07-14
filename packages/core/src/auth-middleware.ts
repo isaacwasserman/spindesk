@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { APIError } from "better-call";
 import type {
 	Role,
@@ -63,5 +64,36 @@ export async function resolveIdentity(
 export function requireAgent(identity: ServiceDeskIdentity): void {
 	if (identity.role !== "agent") {
 		throw new APIError("FORBIDDEN", { message: "Agent role required" });
+	}
+}
+
+function keysMatch(provided: string, expected: string): boolean {
+	const a = Buffer.from(provided);
+	const b = Buffer.from(expected);
+	return a.length === b.length && timingSafeEqual(a, b);
+}
+
+function bearerToken(headers: Headers): string | null {
+	const header = headers.get("authorization");
+	if (!header) return null;
+	const [scheme, token] = header.split(" ");
+	return scheme?.toLowerCase() === "bearer" && token ? token : null;
+}
+
+/**
+ * Throws 401 unless the request carries the configured management API key as an
+ * `Authorization: Bearer <key>` token. When no key is configured, all callers
+ * are rejected (the management surface is disabled).
+ */
+export function requireManagementKey(
+	config: ServiceDeskConfig,
+	headers: Headers,
+): void {
+	const expected = config.managementApiKey;
+	const provided = bearerToken(headers);
+	if (!expected || !provided || !keysMatch(provided, expected)) {
+		throw new APIError("UNAUTHORIZED", {
+			message: "Invalid management API key",
+		});
 	}
 }

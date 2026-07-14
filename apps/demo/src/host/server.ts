@@ -5,7 +5,11 @@
  */
 import { Database } from "bun:sqlite";
 import { getMigrations } from "better-auth/db/migration";
-import { createSpindesk, type SpindeskArgs } from "@spindesk/core";
+import {
+	createSpindesk,
+	type OnActivity,
+	type SpindeskArgs,
+} from "@spindesk/core";
 import { type Auth, createAuth } from "./auth";
 
 /** The raw connection type the service accepts (a Kysely SqliteDatabase, etc). */
@@ -65,10 +69,14 @@ export interface CreateAppOptions {
 	baseURL?: string;
 	/** better-auth user ids to seed with the "agent" role. */
 	agentUserIds?: string[];
+	/** Shared secret authorizing the management API (agent promotion). */
+	managementApiKey?: string;
 	/** Allowed tag vocabulary passed to the service. */
 	availableTags?: string[];
 	/** Mount path for the service router. */
 	mount?: string;
+	/** Host hook invoked for every ticketing activity. */
+	onActivity?: OnActivity;
 }
 
 export interface App {
@@ -85,8 +93,10 @@ export async function createApp(opts: CreateAppOptions = {}): Promise<App> {
 		dbPath = ":memory:",
 		baseURL = "http://localhost:3000",
 		agentUserIds = [],
+		managementApiKey,
 		availableTags,
 		mount = "/api/servicedesk",
+		onActivity,
 	} = opts;
 
 	const inner = new Database(dbPath);
@@ -111,7 +121,7 @@ export async function createApp(opts: CreateAppOptions = {}): Promise<App> {
 			connection: db as unknown as ServiceConnection,
 			provider: "sqlite",
 		},
-		config: { auth, agentUserIds, availableTags },
+		config: { auth, agentUserIds, managementApiKey, availableTags, onActivity },
 	});
 	const handler = service.createHandler({
 		basePath: mount,
@@ -122,14 +132,6 @@ export async function createApp(opts: CreateAppOptions = {}): Promise<App> {
 				description: "Ticketing API for the Spindesk demo host.",
 			},
 			servers: [{ url: mount }],
-			securitySchemes: {
-				sessionCookie: {
-					type: "apiKey",
-					in: "cookie",
-					name: "better-auth.session_token",
-				},
-			},
-			security: [{ sessionCookie: [] }],
 		},
 	});
 	async function fetch(request: Request): Promise<Response> {

@@ -39,6 +39,21 @@ CREATE TABLE IF NOT EXISTS spindesk_comments (
   author_role TEXT NOT NULL,
   body TEXT NOT NULL,
   created_at TEXT NOT NULL,
+  updated_at TEXT,
   FOREIGN KEY (ticket_id) REFERENCES spindesk_tickets(id) ON DELETE CASCADE,
   FOREIGN KEY (parent_id) REFERENCES spindesk_comments(id) ON DELETE CASCADE
+);
+
+-- Denormalized activity log; no FKs so it outlives the rows it references.
+CREATE TABLE IF NOT EXISTS spindesk_activities (
+  id TEXT PRIMARY KEY NOT NULL,
+  type TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  actor_role TEXT NOT NULL,
+  ticket_id TEXT,
+  comment_id TEXT,
+  attachment_id TEXT,
+  user_id TEXT,
+  data TEXT, -- JSON object of variant-specific payload
+  created_at TEXT NOT NULL
 );

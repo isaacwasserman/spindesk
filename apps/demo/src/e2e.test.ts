@@ -6,7 +6,7 @@
  * minted with the better-auth `testUtils` plugin — no manual sign-in flow.
  */
 import { beforeEach, describe, expect, test } from "bun:test";
-import { type App, createApp } from "./host/server";
+import { type App, type CreateAppOptions, createApp } from "./host/server";
 
 // Fixed ids so we can seed agentUserIds before the users exist.
 const AGENT_ID = "agent-1";
@@ -21,8 +21,12 @@ interface Fixture {
 
 const TAGS = ["billing", "bug", "urgent"];
 
-async function setup(): Promise<Fixture> {
-	const app = await createApp({ agentUserIds: [AGENT_ID], availableTags: TAGS });
+async function setup(opts: Partial<CreateAppOptions> = {}): Promise<Fixture> {
+	const app = await createApp({
+		agentUserIds: [AGENT_ID],
+		availableTags: TAGS,
+		...opts,
+	});
 	// biome-ignore lint/suspicious/noExplicitAny: test helpers are dynamic
 	const t = (await (app.auth as any).$context).test;
 
@@ -70,6 +74,8 @@ const post = (app: App, path: string, headers: Headers | undefined, body: unknow
 	call(app, path, headers, { method: "POST", body: JSON.stringify(body) });
 const patch = (app: App, path: string, headers: Headers | undefined, body: unknown) =>
 	call(app, path, headers, { method: "PATCH", body: JSON.stringify(body) });
+const del = (app: App, path: string, headers: Headers | undefined) =>
+	call(app, path, headers, { method: "DELETE" });
 
 describe("service-desk", () => {
 	let app: App;
@@ -574,6 +580,55 @@ describe("service-desk", () => {
 		expect(meOther.role).toBe("agent");
 	});
 
+	test("management API key promotes users to agent by id or email", async () => {
+		const KEY = "secret-key";
+		const f = await setup({ managementApiKey: KEY });
+		const mApp = f.app;
+		const mH = f.headers;
+		const keyed = (body: unknown, key?: string) =>
+			post(
+				mApp,
+				`${MOUNT}/management/agents`,
+				new Headers(key ? { authorization: `Bearer ${key}` } : {}),
+				body,
+			);
+
+		// missing/wrong key rejected
+		expect((await keyed({ userId: OTHER_ID })).status).toBe(401);
+		expect((await keyed({ userId: OTHER_ID }, "nope")).status).toBe(401);
+
+		// promote by id
+		const byId = await (await keyed({ userId: OTHER_ID }, KEY)).json() as any;
+		expect(byId).toEqual({ id: OTHER_ID, role: "agent" });
+		expect(
+			((await (await call(mApp, `${MOUNT}/me`, mH[OTHER_ID])).json()) as any)
+				.role,
+		).toBe("agent");
+
+		// promote by email
+		const byEmail = await (
+			await keyed({ email: "user@example.com" }, KEY)
+		).json() as any;
+		expect(byEmail).toEqual({ id: USER_ID, role: "agent" });
+
+		// unknown email → 404, missing id+email → 400
+		expect((await keyed({ email: "nobody@example.com" }, KEY)).status).toBe(404);
+		expect((await keyed({}, KEY)).status).toBe(400);
+	});
+
+	test("management API is disabled when no key is configured", async () => {
+		expect(
+			(
+				await post(
+					app,
+					`${MOUNT}/management/agents`,
+					new Headers({ authorization: "Bearer anything" }),
+					{ userId: OTHER_ID },
+				)
+			).status,
+		).toBe(401);
+	});
+
 	test("validation errors return 400", async () => {
 		expect(
 			(await post(app, `${MOUNT}/tickets`, H[USER_ID], { subject: "" }))
@@ -622,5 +677,330 @@ describe("service-desk", () => {
 		expect(
 			(await call(app, `${MOUNT}/tickets/nope`, H[AGENT_ID])).status,
 		).toBe(404);
+	});
+});
+
+describe("comment edit/delete", () => {
+	let app: App;
+	let H: Record<string, Headers>;
+
+	beforeEach(async () => {
+		const f = await setup();
+		app = f.app;
+		H = f.headers;
+	});
+
+	async function ticketWithComment() {
+		const ticket = await (
+			await post(app, `${MOUNT}/tickets`, H[USER_ID], {
+				subject: "s",
+				description: "d",
+			})
+		).json() as any;
+		const comment = await (
+			await post(app, `${MOUNT}/tickets/${ticket.id}/comments`, H[USER_ID], {
+				body: "original",
+			})
+		).json() as any;
+		return { ticket, comment };
+	}
+
+	test("author edits their comment; body and updatedAt change", async () => {
+		const { ticket, comment } = await ticketWithComment();
+		expect(comment.updatedAt).toBeNull();
+
+		const edited = await (
+			await patch(
+				app,
+				`${MOUNT}/tickets/${ticket.id}/comments/${comment.id}`,
+				H[USER_ID],
+				{ body: "edited" },
+			)
+		).json() as any;
+		expect(edited.body).toBe("edited");
+		expect(typeof edited.updatedAt).toBe("string");
+	});
+
+	test("agent may edit; unrelated user may not (403)", async () => {
+		const { ticket, comment } = await ticketWithComment();
+		expect(
+			(
+				await patch(
+					app,
+					`${MOUNT}/tickets/${ticket.id}/comments/${comment.id}`,
+					H[AGENT_ID],
+					{ body: "by agent" },
+				)
+			).status,
+		).toBe(200);
+		expect(
+			(
+				await patch(
+					app,
+					`${MOUNT}/tickets/${ticket.id}/comments/${comment.id}`,
+					H[OTHER_ID],
+					{ body: "hack" },
+				)
+			).status,
+		).toBe(403);
+	});
+
+	test("author deletes their comment; unrelated user cannot", async () => {
+		const { ticket, comment } = await ticketWithComment();
+		expect(
+			(
+				await del(
+					app,
+					`${MOUNT}/tickets/${ticket.id}/comments/${comment.id}`,
+					H[OTHER_ID],
+				)
+			).status,
+		).toBe(403);
+
+		expect(
+			(
+				await del(
+					app,
+					`${MOUNT}/tickets/${ticket.id}/comments/${comment.id}`,
+					H[USER_ID],
+				)
+			).status,
+		).toBe(200);
+
+		const after = await (
+			await call(app, `${MOUNT}/tickets/${ticket.id}/comments`, H[USER_ID])
+		).json() as any;
+		expect(after.total).toBe(0);
+	});
+});
+
+describe("activity log + onActivity hook", () => {
+	let app: App;
+	let H: Record<string, Headers>;
+	let activities: any[];
+
+	beforeEach(async () => {
+		activities = [];
+		const f = await setup({
+			onActivity: async (activity) => {
+				activities.push(activity);
+			},
+		});
+		app = f.app;
+		H = f.headers;
+	});
+
+	const typesFor = (ticketId?: string) =>
+		activities
+			.filter((a) => ticketId === undefined || a.ticketId === ticketId)
+			.map((a) => a.type);
+
+	test("ticket create/update/status/assign/archive emit granular activities", async () => {
+		const t = await (
+			await post(app, `${MOUNT}/tickets`, H[USER_ID], {
+				subject: "orig",
+				description: "d",
+			})
+		).json() as any;
+
+		const created = activities.find((a) => a.type === "ticket-created");
+		expect(created.ticketId).toBe(t.id);
+		expect(created.ticket.subject).toBe("orig");
+		expect(created.actor).toEqual({ id: USER_ID, role: "user" });
+
+		await patch(app, `${MOUNT}/tickets/${t.id}`, H[USER_ID], {
+			subject: "renamed",
+		});
+		await patch(app, `${MOUNT}/tickets/${t.id}`, H[AGENT_ID], {
+			status: "pending",
+			assigneeId: AGENT_ID,
+		});
+		await patch(app, `${MOUNT}/tickets/${t.id}`, H[USER_ID], {
+			archived: true,
+		});
+		await patch(app, `${MOUNT}/tickets/${t.id}`, H[USER_ID], {
+			archived: false,
+		});
+
+		const updated = activities.find((a) => a.type === "ticket-updated");
+		expect(updated.changedFields).toContain("subject");
+
+		const status = activities.find((a) => a.type === "ticket-status-changed");
+		expect(status.from).toBe("open");
+		expect(status.to).toBe("pending");
+
+		const assigned = activities.find((a) => a.type === "ticket-assigned");
+		expect(assigned.from).toBeNull();
+		expect(assigned.to).toBe(AGENT_ID);
+
+		expect(typesFor(t.id)).toContain("ticket-archived");
+		expect(typesFor(t.id)).toContain("ticket-unarchived");
+	});
+
+	test("adding a comment emits comment-created, not ticket-updated", async () => {
+		const t = await (
+			await post(app, `${MOUNT}/tickets`, H[USER_ID], {
+				subject: "s",
+				description: "d",
+			})
+		).json() as any;
+		activities.length = 0;
+
+		await post(app, `${MOUNT}/tickets/${t.id}/comments`, H[USER_ID], {
+			body: "hi",
+		});
+		expect(typesFor(t.id)).toEqual(["comment-created"]);
+	});
+
+	test("comment edit/delete emit comment-edited/comment-deleted", async () => {
+		const t = await (
+			await post(app, `${MOUNT}/tickets`, H[USER_ID], {
+				subject: "s",
+				description: "d",
+			})
+		).json() as any;
+		const c = await (
+			await post(app, `${MOUNT}/tickets/${t.id}/comments`, H[USER_ID], {
+				body: "orig",
+			})
+		).json() as any;
+
+		await patch(
+			app,
+			`${MOUNT}/tickets/${t.id}/comments/${c.id}`,
+			H[USER_ID],
+			{ body: "new" },
+		);
+		await del(app, `${MOUNT}/tickets/${t.id}/comments/${c.id}`, H[USER_ID]);
+
+		const edited = activities.find((a) => a.type === "comment-edited");
+		expect(edited.commentId).toBe(c.id);
+		expect(edited.comment.body).toBe("new");
+		const deleted = activities.find((a) => a.type === "comment-deleted");
+		expect(deleted.commentId).toBe(c.id);
+	});
+
+	test("role change and attachment lifecycle emit activities", async () => {
+		await patch(app, `${MOUNT}/users/${OTHER_ID}/role`, H[AGENT_ID], {
+			role: "agent",
+		});
+		const role = activities.find((a) => a.type === "user-role-changed");
+		expect(role.userId).toBe(OTHER_ID);
+		expect(role.to).toBe("agent");
+
+		const t = await (
+			await post(app, `${MOUNT}/tickets`, H[USER_ID], {
+				subject: "s",
+				description: "d",
+			})
+		).json() as any;
+		const up = await (
+			await call(app, `${MOUNT}/tickets/${t.id}/attachments`, H[USER_ID], {
+				method: "POST",
+				body: new Uint8Array([1, 2, 3]),
+				headers: { "x-filename": "a.bin" },
+			})
+		).json() as any;
+		await del(app, `${MOUNT}/tickets/${t.id}/attachments/${up.id}`, H[USER_ID]);
+
+		expect(typesFor(t.id)).toContain("attachment-created");
+		expect(typesFor(t.id)).toContain("attachment-deleted");
+	});
+
+	test("GET /activities is access-scoped; agent sees all, user sees own", async () => {
+		const mine = await (
+			await post(app, `${MOUNT}/tickets`, H[USER_ID], {
+				subject: "mine",
+				description: "d",
+			})
+		).json() as any;
+		await post(app, `${MOUNT}/tickets`, H[OTHER_ID], {
+			subject: "theirs",
+			description: "d",
+		});
+
+		const agentFeed = await (
+			await call(app, `${MOUNT}/activities`, H[AGENT_ID])
+		).json() as any;
+		expect(agentFeed.total).toBe(2);
+		// newest first
+		expect(agentFeed.activities[0].createdAt >= agentFeed.activities[1].createdAt).toBe(true);
+
+		const userFeed = await (
+			await call(app, `${MOUNT}/activities`, H[USER_ID])
+		).json() as any;
+		expect(userFeed.total).toBe(1);
+		expect(userFeed.activities[0].ticketId).toBe(mine.id);
+
+		// type filter + pagination
+		const filtered = await (
+			await call(
+				app,
+				`${MOUNT}/activities?type=ticket-created&limit=1`,
+				H[AGENT_ID],
+			)
+		).json() as any;
+		expect(filtered.total).toBe(2);
+		expect(filtered.activities).toHaveLength(1);
+		expect(filtered.activities[0].type).toBe("ticket-created");
+	});
+
+	test("GET /tickets/:id/activities scoped to the ticket, denied to strangers", async () => {
+		const t = await (
+			await post(app, `${MOUNT}/tickets`, H[USER_ID], {
+				subject: "s",
+				description: "d",
+			})
+		).json() as any;
+		await patch(app, `${MOUNT}/tickets/${t.id}`, H[AGENT_ID], {
+			status: "pending",
+		});
+
+		const feed = await (
+			await call(app, `${MOUNT}/tickets/${t.id}/activities`, H[USER_ID])
+		).json() as any;
+		expect(feed.activities.map((a: any) => a.type).sort()).toEqual(
+			["ticket-created", "ticket-status-changed"].sort(),
+		);
+
+		expect(
+			(await call(app, `${MOUNT}/tickets/${t.id}/activities`, H[OTHER_ID]))
+				.status,
+		).toBe(403);
+	});
+});
+
+describe("activity persistence without a hook", () => {
+	test("activities are persisted even when no onActivity is configured", async () => {
+		const f = await setup();
+		const t = await (
+			await post(f.app, `${MOUNT}/tickets`, f.headers[USER_ID], {
+				subject: "s",
+				description: "d",
+			})
+		).json() as any;
+		const feed = await (
+			await call(f.app, `${MOUNT}/activities`, f.headers[USER_ID])
+		).json() as any;
+		expect(feed.total).toBe(1);
+		expect(feed.activities[0].type).toBe("ticket-created");
+		expect(feed.activities[0].ticketId).toBe(t.id);
+	});
+
+	test("a throwing onActivity hook does not fail the request or the write", async () => {
+		const f = await setup({
+			onActivity: async () => {
+				throw new Error("boom");
+			},
+		});
+		const res = await post(f.app, `${MOUNT}/tickets`, f.headers[USER_ID], {
+			subject: "s",
+			description: "d",
+		});
+		expect(res.status).toBe(200);
+		const feed = await (
+			await call(f.app, `${MOUNT}/activities`, f.headers[USER_ID])
+		).json() as any;
+		expect(feed.total).toBe(1);
 	});
 });

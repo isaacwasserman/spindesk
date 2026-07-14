@@ -3,6 +3,7 @@ import type {
 	KyselyFromServiceDBSchema,
 	ServiceContext,
 } from "futonic";
+import type { OnActivity } from "./activity.js";
 import type { ServiceDeskSchema } from "./schema.js";
 
 export type Role = "user" | "agent";
@@ -54,10 +55,22 @@ export type ServiceDeskConfig = {
 	agentUserIds?: string[];
 	/** better-auth user emails seeded with the "agent" role on first sight. */
 	agentEmails?: string[];
+	/**
+	 * Shared secret that authorizes management-only endpoints (e.g. promoting a
+	 * user to agent by id or email) without a better-auth session. Callers pass
+	 * it as an `Authorization: Bearer <key>` token.
+	 */
+	managementApiKey?: string;
 	/** Allowed tag vocabulary; ticket tags are validated against this. */
 	availableTags?: string[];
 	/** Max attachment size in bytes (default 5 MiB). */
 	maxAttachmentBytes?: number;
+	/**
+	 * Called for every ticketing activity after it's persisted to the activity
+	 * log. Lets the host run its own processing (notifications, mirroring, ...).
+	 * Errors are logged and swallowed — a failing hook never breaks the request.
+	 */
+	onActivity?: OnActivity;
 };
 
 /** Default attachment size cap: 5 MiB. */

@@ -8,13 +8,18 @@ import {
 	sql,
 } from "kysely";
 import { z } from "zod";
-import { requireAgent, resolveIdentity } from "./auth-middleware.js";
+import { recordActivity } from "./activity.js";
+import {
+	requireAgent,
+	requireManagementKey,
+	resolveIdentity,
+} from "./auth-middleware.js";
 import {
 	type FilterNode,
 	mentionsArchived,
 	parseLuceneToFilter,
 } from "./filter.js";
-import { resolveUserNames } from "./names.js";
+import { resolveUserIdByEmail, resolveUserNames } from "./names.js";
 import {
 	type Ctx,
 	DEFAULT_MAX_ATTACHMENT_BYTES,
@@ -23,6 +28,7 @@ import {
 	type ServiceDeskConfig,
 	type SvcCtx,
 	TICKET_STATUS,
+	type TicketStatus,
 } from "./types.js";
 
 /**
@@ -86,6 +92,7 @@ const commentSchema = z.object({
 	authorRole: roleSchema,
 	body: z.string(),
 	createdAt: z.string(),
+	updatedAt: z.string().nullable(),
 });
 
 const attachmentSchema = z.object({
@@ -115,6 +122,25 @@ const roleUpdateSchema = z.object({ id: z.string(), role: roleSchema });
 const tagsSchema = z.object({ tags: z.array(z.string()) });
 const okSchema = z.object({ ok: z.boolean() });
 
+const activitySchema = z.object({
+	id: z.string(),
+	type: z.string(),
+	actorId: z.string(),
+	actorRole: roleSchema,
+	ticketId: z.string().nullable(),
+	commentId: z.string().nullable(),
+	attachmentId: z.string().nullable(),
+	userId: z.string().nullable(),
+	data: z.record(z.string(), z.unknown()).nullable(),
+	createdAt: z.string(),
+});
+const activityPageSchema = z.object({
+	activities: z.array(activitySchema),
+	total: z.number(),
+	limit: z.number(),
+	offset: z.number(),
+});
+
 export type Ticket<M extends TicketMetadata = TicketMetadata> = z.infer<
 	ReturnType<typeof ticketSchemaFor<M>>
 >;
@@ -130,6 +156,16 @@ function authOf(svc: SvcCtx) {
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
+
+/** Clamp `limit`/`offset` query strings into a sane pagination window. */
+function paginate(query?: { limit?: string; offset?: string }) {
+	const limit = Math.min(
+		Math.max(Number(query?.limit) || DEFAULT_LIMIT, 1),
+		MAX_LIMIT,
+	);
+	const offset = Math.max(Number(query?.offset) || 0, 0);
+	return { limit, offset };
+}
 
 /** Attachment metadata columns (everything except the binary `data` blob). */
 const ATTACHMENT_META = [
@@ -308,7 +344,26 @@ async function enrichComments(
 		...c,
 		authorRole: c.authorRole as Comment["authorRole"],
 		authorName: names.get(c.authorId)?.name ?? null,
+		updatedAt: c.updatedAt ?? null,
 	}));
+}
+
+type ActivityRow = DB["activities"];
+
+/** Project a stored activity row into its DTO, parsing the JSON `data` column. */
+function toActivityDto(row: ActivityRow) {
+	return {
+		id: row.id,
+		type: row.type,
+		actorId: row.actorId,
+		actorRole: row.actorRole as Role,
+		ticketId: row.ticketId ?? null,
+		commentId: row.commentId ?? null,
+		attachmentId: row.attachmentId ?? null,
+		userId: row.userId ?? null,
+		data: row.data == null ? null : parseMetadata(row.data),
+		createdAt: row.createdAt,
+	};
 }
 
 /**
@@ -425,7 +480,14 @@ export function createSpindeskEndpoints<
 				return t;
 			});
 			svc.logger.info(`Ticket created: ${ticket.id} (#${ticket.number})`);
-			return await enrichTicket<M>(svc, ticket);
+			const enriched = await enrichTicket<M>(svc, ticket);
+			await recordActivity(svc, {
+				type: "ticket-created",
+				actor: { id: serviceDesk.userId, role: serviceDesk.role },
+				ticketId: enriched.id,
+				ticket: enriched,
+			});
+			return enriched;
 		},
 	);
 
@@ -600,7 +662,66 @@ export function createSpindeskEndpoints<
 				.selectAll()
 				.where("id", "=", ticket.id)
 				.executeTakeFirstOrThrow();
-			return await enrichTicket<M>(svc, updated);
+			const enriched = await enrichTicket<M>(svc, updated);
+
+			const actor = { id: serviceDesk.userId, role: serviceDesk.role };
+			if (ticket.status !== updated.status) {
+				await recordActivity(svc, {
+					type: "ticket-status-changed",
+					actor,
+					ticketId: enriched.id,
+					ticket: enriched,
+					from: ticket.status as TicketStatus,
+					to: updated.status as TicketStatus,
+				});
+			}
+			if ((ticket.assigneeId ?? null) !== (updated.assigneeId ?? null)) {
+				await recordActivity(svc, {
+					type: "ticket-assigned",
+					actor,
+					ticketId: enriched.id,
+					ticket: enriched,
+					from: ticket.assigneeId ?? null,
+					to: updated.assigneeId ?? null,
+				});
+			}
+			const wasArchived = ticket.archivedAt != null;
+			const isArchived = updated.archivedAt != null;
+			if (wasArchived !== isArchived) {
+				await recordActivity(svc, {
+					type: isArchived ? "ticket-archived" : "ticket-unarchived",
+					actor,
+					ticketId: enriched.id,
+					ticket: enriched,
+				});
+			}
+			const changedFields: string[] = [];
+			if (ticket.subject !== updated.subject) changedFields.push("subject");
+			if (ticket.description !== updated.description) {
+				changedFields.push("description");
+			}
+			if (
+				JSON.stringify(parseTags(ticket.tags)) !==
+				JSON.stringify(parseTags(updated.tags))
+			) {
+				changedFields.push("tags");
+			}
+			if (
+				JSON.stringify(parseMetadata(ticket.metadata)) !==
+				JSON.stringify(parseMetadata(updated.metadata))
+			) {
+				changedFields.push("metadata");
+			}
+			if (changedFields.length) {
+				await recordActivity(svc, {
+					type: "ticket-updated",
+					actor,
+					ticketId: enriched.id,
+					ticket: enriched,
+					changedFields,
+				});
+			}
+			return enriched;
 		},
 	);
 
@@ -667,6 +788,7 @@ export function createSpindeskEndpoints<
 				authorRole: serviceDesk.role,
 				body: ctx.body.body,
 				createdAt: now,
+				updatedAt: null,
 			};
 			await svc.db.insertInto("comments").values(comment).execute();
 			// Bump ticket activity timestamp.
@@ -676,7 +798,97 @@ export function createSpindeskEndpoints<
 				.where("id", "=", ticket.id)
 				.execute();
 			const [enriched] = await enrichComments(svc, [comment]);
+			await recordActivity(svc, {
+				type: "comment-created",
+				actor: { id: serviceDesk.userId, role: serviceDesk.role },
+				ticketId: ticket.id,
+				commentId: comment.id,
+				comment: enriched as Comment,
+			});
 			return enriched as Comment;
+		},
+	);
+
+	/** Load a comment on an accessible ticket, enforcing author-or-agent access. */
+	async function getEditableComment(
+		context: Ctx["context"],
+		idOrNumber: string,
+		commentId: string,
+	) {
+		const { serviceCtx: svc, serviceDesk } = context;
+		const ticket = await getAccessibleTicket(context, idOrNumber);
+		const comment = await svc.db
+			.selectFrom("comments")
+			.selectAll()
+			.where("id", "=", commentId)
+			.executeTakeFirst();
+		if (!comment || comment.ticketId !== ticket.id) {
+			throw new APIError("NOT_FOUND", { message: "Comment not found" });
+		}
+		const isAgent = serviceDesk.role === "agent";
+		const isAuthor = comment.authorId === serviceDesk.userId;
+		if (!isAgent && !isAuthor) {
+			throw new APIError("FORBIDDEN", { message: "Not your comment" });
+		}
+		return { ticket, comment };
+	}
+
+	const editComment = createEndpoint(
+		"/tickets/:id/comments/:commentId",
+		{
+			method: "PATCH",
+			body: z.object({ body: z.string().min(1) }),
+			output: commentSchema,
+		},
+		async (ctx) => {
+			const context = (ctx as unknown as Ctx).context;
+			const { serviceCtx: svc, serviceDesk } = context;
+			const { id, commentId } = ctx.params as {
+				id: string;
+				commentId: string;
+			};
+			const { ticket } = await getEditableComment(context, id, commentId);
+			await svc.db
+				.updateTable("comments")
+				.set({ body: ctx.body.body, updatedAt: new Date().toISOString() })
+				.where("id", "=", commentId)
+				.execute();
+			const updated = await svc.db
+				.selectFrom("comments")
+				.selectAll()
+				.where("id", "=", commentId)
+				.executeTakeFirstOrThrow();
+			const [enriched] = await enrichComments(svc, [updated]);
+			await recordActivity(svc, {
+				type: "comment-edited",
+				actor: { id: serviceDesk.userId, role: serviceDesk.role },
+				ticketId: ticket.id,
+				commentId,
+				comment: enriched as Comment,
+			});
+			return enriched as Comment;
+		},
+	);
+
+	const deleteComment = createEndpoint(
+		"/tickets/:id/comments/:commentId",
+		{ method: "DELETE", output: okSchema },
+		async (ctx) => {
+			const context = (ctx as unknown as Ctx).context;
+			const { serviceCtx: svc, serviceDesk } = context;
+			const { id, commentId } = ctx.params as {
+				id: string;
+				commentId: string;
+			};
+			const { ticket } = await getEditableComment(context, id, commentId);
+			await svc.db.deleteFrom("comments").where("id", "=", commentId).execute();
+			await recordActivity(svc, {
+				type: "comment-deleted",
+				actor: { id: serviceDesk.userId, role: serviceDesk.role },
+				ticketId: ticket.id,
+				commentId,
+			});
+			return { ok: true };
 		},
 	);
 
@@ -687,6 +899,19 @@ export function createSpindeskEndpoints<
 			method: "PATCH",
 			body: z.object({ role: z.enum(["user", "agent"]) }),
 			output: roleUpdateSchema,
+			metadata: {
+				openapi: {
+					summary: "Set a user's role",
+					description:
+						"Promote or demote another user's role. Requires the caller to hold the **agent** role; regular users receive `403 Forbidden`.",
+					security: [{ sessionCookie: [] }],
+					responses: {
+						"403": {
+							description: "Forbidden. The authenticated user is not an agent.",
+						},
+					},
+				},
+			},
 		},
 		async (ctx) => {
 			const { serviceCtx: svc, serviceDesk } = (ctx as unknown as Ctx).context;
@@ -711,7 +936,92 @@ export function createSpindeskEndpoints<
 					.values({ id, role, createdAt: new Date().toISOString() })
 					.execute();
 			}
+			await recordActivity(svc, {
+				type: "user-role-changed",
+				actor: { id: serviceDesk.userId, role: serviceDesk.role },
+				userId: id,
+				from: (existing?.role as Role | undefined) ?? null,
+				to: role,
+			});
 			return { id, role };
+		},
+	);
+
+	/**
+	 * Management-only: promote a user to agent by id or email, authorized by the
+	 * management API key rather than a session. Uses the raw `defineEndpoint`
+	 * (not the session-authed wrapper) so callers need no better-auth session.
+	 */
+	const promoteAgent = defineEndpoint(
+		"/management/agents",
+		{
+			method: "POST",
+			body: z
+				.object({
+					userId: z.string().min(1).optional(),
+					email: z.string().min(1).optional(),
+				})
+				.refine((v) => !!v.userId || !!v.email, {
+					message: "userId or email is required",
+				}),
+			output: roleUpdateSchema,
+			metadata: {
+				openapi: {
+					summary: "Promote a user to agent",
+					description:
+						"Promote a user to the **agent** role by id or email. Authorized by the management API key header, not a better-auth session.",
+					security: [{ managementApiKey: [] }],
+				},
+			},
+		},
+		async (ctx) => {
+			const svc = (ctx as unknown as Ctx).context.serviceCtx;
+			requireManagementKey(configOf(svc), headersOf(ctx));
+			const { userId, email } = ctx.body as {
+				userId?: string;
+				email?: string;
+			};
+
+			let id = userId ?? null;
+			if (!id && email) {
+				id = await resolveUserIdByEmail(authOf(svc), email);
+				if (!id) {
+					throw new APIError("NOT_FOUND", {
+						message: "No user found for that email",
+					});
+				}
+			}
+			if (!id) {
+				throw new APIError("BAD_REQUEST", {
+					message: "userId or email is required",
+				});
+			}
+
+			const existing = await svc.db
+				.selectFrom("users")
+				.selectAll()
+				.where("id", "=", id)
+				.executeTakeFirst();
+			if (existing) {
+				await svc.db
+					.updateTable("users")
+					.set({ role: "agent" })
+					.where("id", "=", id)
+					.execute();
+			} else {
+				await svc.db
+					.insertInto("users")
+					.values({ id, role: "agent", createdAt: new Date().toISOString() })
+					.execute();
+			}
+			await recordActivity(svc, {
+				type: "user-role-changed",
+				actor: { id: "management-api", role: "agent" },
+				userId: id,
+				from: (existing?.role as Role | undefined) ?? null,
+				to: "agent",
+			});
+			return { id, role: "agent" as Role };
 		},
 	);
 
@@ -797,6 +1107,13 @@ export function createSpindeskEndpoints<
 			await svc.db.insertInto("attachments").values(row).execute();
 			svc.logger.info(`Attachment stored: ${row.id} (${size} bytes)`);
 			const { data: _data, ...meta } = row;
+			await recordActivity(svc, {
+				type: "attachment-created",
+				actor: { id: serviceDesk.userId, role: serviceDesk.role },
+				ticketId: ticket.id,
+				attachmentId: meta.id,
+				attachment: meta,
+			});
 			return meta;
 		},
 	);
@@ -872,7 +1189,124 @@ export function createSpindeskEndpoints<
 				throw new APIError("FORBIDDEN", { message: "Not allowed" });
 			}
 			await svc.db.deleteFrom("attachments").where("id", "=", attId).execute();
+			await recordActivity(svc, {
+				type: "attachment-deleted",
+				actor: { id: serviceDesk.userId, role: serviceDesk.role },
+				ticketId: ticket.id,
+				attachmentId: attId,
+			});
 			return { ok: true };
+		},
+	);
+
+	const listActivities = createEndpoint(
+		"/activities",
+		{
+			method: "GET",
+			query: z.object({
+				limit: z.string().optional(),
+				offset: z.string().optional(),
+				type: z.string().optional(),
+				ticketId: z.string().optional(),
+			}),
+			output: activityPageSchema,
+		},
+		async (ctx) => {
+			const { serviceCtx: svc, serviceDesk } = (ctx as unknown as Ctx).context;
+			const { limit, offset } = paginate(ctx.query);
+			const isAgent = serviceDesk.role === "agent";
+			const type = ctx.query?.type;
+			const ticketId = ctx.query?.ticketId;
+
+			const conditions = (eb: ExpressionBuilder<DB, "activities">) => {
+				const clauses: Expression<SqlBool>[] = [];
+				if (!isAgent) {
+					// A user sees activities on tickets they own plus their own
+					// role changes; agents see everything.
+					clauses.push(
+						eb.or([
+							eb(
+								"ticketId",
+								"in",
+								eb
+									.selectFrom("tickets")
+									.select("id")
+									.where("userId", "=", serviceDesk.userId),
+							),
+							eb("userId", "=", serviceDesk.userId),
+						]),
+					);
+				}
+				if (type) clauses.push(eb("type", "=", type));
+				if (ticketId) clauses.push(eb("ticketId", "=", ticketId));
+				return clauses.length ? eb.and(clauses) : ALWAYS_TRUE;
+			};
+
+			const rows = await svc.db
+				.selectFrom("activities")
+				.selectAll()
+				.where(conditions)
+				.orderBy("createdAt", "desc")
+				.limit(limit)
+				.offset(offset)
+				.execute();
+			const countRow = await svc.db
+				.selectFrom("activities")
+				.select((eb) => eb.fn.countAll().as("count"))
+				.where(conditions)
+				.executeTakeFirst();
+			return {
+				activities: rows.map(toActivityDto),
+				total: Number(countRow?.count ?? 0),
+				limit,
+				offset,
+			};
+		},
+	);
+
+	const listTicketActivities = createEndpoint(
+		"/tickets/:id/activities",
+		{
+			method: "GET",
+			query: z.object({
+				limit: z.string().optional(),
+				offset: z.string().optional(),
+				type: z.string().optional(),
+			}),
+			output: activityPageSchema,
+		},
+		async (ctx) => {
+			const context = (ctx as unknown as Ctx).context;
+			const { serviceCtx: svc } = context;
+			const { id } = ctx.params as { id: string };
+			const ticket = await getAccessibleTicket(context, id);
+			const { limit, offset } = paginate(ctx.query);
+			const type = ctx.query?.type;
+
+			let list = svc.db
+				.selectFrom("activities")
+				.selectAll()
+				.where("ticketId", "=", ticket.id);
+			let count = svc.db
+				.selectFrom("activities")
+				.select((eb) => eb.fn.countAll().as("count"))
+				.where("ticketId", "=", ticket.id);
+			if (type) {
+				list = list.where("type", "=", type);
+				count = count.where("type", "=", type);
+			}
+			const rows = await list
+				.orderBy("createdAt", "desc")
+				.limit(limit)
+				.offset(offset)
+				.execute();
+			const countRow = await count.executeTakeFirst();
+			return {
+				activities: rows.map(toActivityDto),
+				total: Number(countRow?.count ?? 0),
+				limit,
+				offset,
+			};
 		},
 	);
 
@@ -885,10 +1319,15 @@ export function createSpindeskEndpoints<
 		updateTicket: updateTicket,
 		listComments: listComments,
 		addComment: addComment,
+		editComment: editComment,
+		deleteComment: deleteComment,
 		setUserRole: setUserRole,
+		promoteAgent: promoteAgent,
 		uploadAttachment: uploadAttachment,
 		listAttachments: listAttachments,
 		downloadAttachment: downloadAttachment,
 		deleteAttachment: deleteAttachment,
+		listActivities: listActivities,
+		listTicketActivities: listTicketActivities,
 	};
 }
