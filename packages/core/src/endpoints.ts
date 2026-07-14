@@ -9,13 +9,17 @@ import {
 } from "kysely";
 import { z } from "zod";
 import { recordActivity } from "./activity.js";
-import { requireAgent, resolveIdentity } from "./auth-middleware.js";
+import {
+	requireAgent,
+	requireManagementKey,
+	resolveIdentity,
+} from "./auth-middleware.js";
 import {
 	type FilterNode,
 	mentionsArchived,
 	parseLuceneToFilter,
 } from "./filter.js";
-import { resolveUserNames } from "./names.js";
+import { resolveUserIdByEmail, resolveUserNames } from "./names.js";
 import {
 	type Ctx,
 	DEFAULT_MAX_ATTACHMENT_BYTES,
@@ -905,6 +909,76 @@ export function createSpindeskEndpoints(
 		},
 	);
 
+	/**
+	 * Management-only: promote a user to agent by id or email, authorized by the
+	 * management API key rather than a session. Uses the raw `defineEndpoint`
+	 * (not the session-authed wrapper) so callers need no better-auth session.
+	 */
+	const promoteAgent = defineEndpoint(
+		"/management/agents",
+		{
+			method: "POST",
+			body: z
+				.object({
+					userId: z.string().min(1).optional(),
+					email: z.string().min(1).optional(),
+				})
+				.refine((v) => !!v.userId || !!v.email, {
+					message: "userId or email is required",
+				}),
+			output: roleUpdateSchema,
+		},
+		async (ctx) => {
+			const svc = (ctx as unknown as Ctx).context.serviceCtx;
+			requireManagementKey(configOf(svc), headersOf(ctx));
+			const { userId, email } = ctx.body as {
+				userId?: string;
+				email?: string;
+			};
+
+			let id = userId ?? null;
+			if (!id && email) {
+				id = await resolveUserIdByEmail(authOf(svc), email);
+				if (!id) {
+					throw new APIError("NOT_FOUND", {
+						message: "No user found for that email",
+					});
+				}
+			}
+			if (!id) {
+				throw new APIError("BAD_REQUEST", {
+					message: "userId or email is required",
+				});
+			}
+
+			const existing = await svc.db
+				.selectFrom("users")
+				.selectAll()
+				.where("id", "=", id)
+				.executeTakeFirst();
+			if (existing) {
+				await svc.db
+					.updateTable("users")
+					.set({ role: "agent" })
+					.where("id", "=", id)
+					.execute();
+			} else {
+				await svc.db
+					.insertInto("users")
+					.values({ id, role: "agent", createdAt: new Date().toISOString() })
+					.execute();
+			}
+			await recordActivity(svc, {
+				type: "user-role-changed",
+				actor: { id: "management-api", role: "agent" },
+				userId: id,
+				from: (existing?.role as Role | undefined) ?? null,
+				to: "agent",
+			});
+			return { id, role: "agent" as Role };
+		},
+	);
+
 	/** Available tag vocabulary, for the host UI's tag picker. */
 	const listTags = createEndpoint(
 		"/tags",
@@ -1202,6 +1276,7 @@ export function createSpindeskEndpoints(
 		editComment: editComment,
 		deleteComment: deleteComment,
 		setUserRole: setUserRole,
+		promoteAgent: promoteAgent,
 		uploadAttachment: uploadAttachment,
 		listAttachments: listAttachments,
 		downloadAttachment: downloadAttachment,

@@ -28,3 +28,17 @@ export async function resolveUserNames(
 	}
 	return map;
 }
+
+/** Resolves a better-auth user id from an email, or null if none matches. */
+export async function resolveUserIdByEmail(
+	auth: AuthLike,
+	email: string,
+): Promise<string | null> {
+	const ctx = await auth.$context;
+	const rows = await ctx.adapter.findMany<AuthUser>({
+		model: "user",
+		where: [{ field: "email", value: email }],
+		select: ["id"],
+	});
+	return rows[0]?.id ?? null;
+}
