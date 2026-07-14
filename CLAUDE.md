@@ -14,3 +14,6 @@ Do NOT write:
 - Multi-paragraph explanations of why one approach was chosen over another.
 
 If a comment is removed and a future reader would still understand the code, the comment shouldn't have been there. If you come across existing comments that violate these rules while working in a file, ask the user whether they can be removed rather than silently deleting them or leaving them in place.
+
+## README
+Any change that modifies the consumer-facing interface must be accompanied by a corresponding README update. If you notice that prior changes to the consumer-facing interface were not reflected in the README, backfill the missing documentation as part of your work.
