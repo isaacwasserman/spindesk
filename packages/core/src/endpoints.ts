@@ -874,6 +874,19 @@ export function createSpindeskEndpoints(
 			method: "PATCH",
 			body: z.object({ role: z.enum(["user", "agent"]) }),
 			output: roleUpdateSchema,
+			metadata: {
+				openapi: {
+					summary: "Set a user's role",
+					description:
+						"Promote or demote another user's role. Requires the caller to hold the **agent** role; regular users receive `403 Forbidden`.",
+					security: [{ sessionCookie: [] }],
+					responses: {
+						"403": {
+							description: "Forbidden. The authenticated user is not an agent.",
+						},
+					},
+				},
+			},
 		},
 		async (ctx) => {
 			const { serviceCtx: svc, serviceDesk } = (ctx as unknown as Ctx).context;
@@ -927,6 +940,14 @@ export function createSpindeskEndpoints(
 					message: "userId or email is required",
 				}),
 			output: roleUpdateSchema,
+			metadata: {
+				openapi: {
+					summary: "Promote a user to agent",
+					description:
+						"Promote a user to the **agent** role by id or email. Authorized by the management API key header, not a better-auth session.",
+					security: [{ managementApiKey: [] }],
+				},
+			},
 		},
 		async (ctx) => {
 			const svc = (ctx as unknown as Ctx).context.serviceCtx;

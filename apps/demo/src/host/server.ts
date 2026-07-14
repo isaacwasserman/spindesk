@@ -132,14 +132,6 @@ export async function createApp(opts: CreateAppOptions = {}): Promise<App> {
 				description: "Ticketing API for the Spindesk demo host.",
 			},
 			servers: [{ url: mount }],
-			securitySchemes: {
-				sessionCookie: {
-					type: "apiKey",
-					in: "cookie",
-					name: "better-auth.session_token",
-				},
-			},
-			security: [{ sessionCookie: [] }],
 		},
 	});
 	async function fetch(request: Request): Promise<Response> {

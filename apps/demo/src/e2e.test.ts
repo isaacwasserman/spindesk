@@ -589,7 +589,7 @@ describe("service-desk", () => {
 			post(
 				mApp,
 				`${MOUNT}/management/agents`,
-				new Headers(key ? { "x-management-api-key": key } : {}),
+				new Headers(key ? { authorization: `Bearer ${key}` } : {}),
 				body,
 			);
 
@@ -622,7 +622,7 @@ describe("service-desk", () => {
 				await post(
 					app,
 					`${MOUNT}/management/agents`,
-					new Headers({ "x-management-api-key": "anything" }),
+					new Headers({ authorization: "Bearer anything" }),
 					{ userId: OTHER_ID },
 				)
 			).status,
