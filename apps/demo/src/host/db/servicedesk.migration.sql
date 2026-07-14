@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS spindesk_tickets (
   status TEXT NOT NULL,
   assignee_id TEXT,
   tags TEXT, -- JSON array of tags, e.g. ["billing","urgent"]
+  metadata TEXT, -- JSON object of arbitrary key/value metadata
   archived_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL

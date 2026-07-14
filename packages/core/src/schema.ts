@@ -40,6 +40,10 @@ export const serviceDeskSchema = {
 				// denormalized so Lucene filters map to a single column.
 				// Stored as JSON text on SQLite/MySQL, jsonb on Postgres.
 				tags: { type: "json", optional: true },
+				// Arbitrary host-supplied key/value metadata (e.g.
+				// {source:"email",priority:3}); opaque to the service.
+				// Stored as JSON text on SQLite/MySQL, jsonb on Postgres.
+				metadata: { type: "json", optional: true },
 				// Set when the author archives the ticket; hides it from
 				// default listings.
 				archivedAt: { type: "string", optional: true },
