@@ -144,16 +144,29 @@ All routes are relative to the mount path. Requests are authenticated via the co
 
 ### Management API
 
-Management routes are authorized by the configured `managementApiKey` — sent as an `Authorization: Bearer <key>` token — rather than a better-auth session. When no key is configured, the entire management surface returns `401`. These endpoints let a trusted backend act on behalf of a user identified by `:userId` (created tickets are owned by that user; reads, updates, and deletes are scoped to that user's tickets). Unlike the session `PATCH /tickets/:id`, the management update applies every field, including the agent-only workflow fields (`status`, `assigneeId`).
+Configure a `managementApiKey` to enable a trusted backend to call the API without a better-auth session. The key is sent as an `Authorization: Bearer <key>` token; when no key is configured, the entire management surface returns `401`.
 
-| Method   | Path                                       | Description                                  |
-| -------- | ------------------------------------------ | -------------------------------------------- |
-| `POST`   | `/management/agents`                       | Promote a user to agent by id or email.      |
-| `POST`   | `/management/users/:userId/tickets`        | Create a ticket owned by the user.           |
-| `GET`    | `/management/users/:userId/tickets`        | List the user's tickets (Lucene filter).     |
-| `GET`    | `/management/users/:userId/tickets/:id`    | Fetch one of the user's tickets.             |
-| `PATCH`  | `/management/users/:userId/tickets/:id`    | Update one of the user's tickets.            |
-| `DELETE` | `/management/users/:userId/tickets/:id`    | Permanently delete one of the user's tickets.|
+| Method | Path                 | Description                             |
+| ------ | -------------------- | --------------------------------------- |
+| `POST` | `/management/agents` | Promote a user to agent by id or email. |
+
+#### Acting on behalf of a user (impersonation)
+
+To operate on any user's behalf, send the management key together with an `x-impersonate-user-id: <userId>` header (exported as `IMPERSONATION_HEADER`) on **any** endpoint in the table above. The request then runs exactly as if that user had made it — with that user's own role — so a plain user's requests are scoped to their own tickets and barred from agent-only fields, while impersonating an agent grants agent powers. This is the way to create tickets, upload attachments, comment, etc. for a user; no dedicated management endpoints are needed.
+
+```ts
+import { IMPERSONATION_HEADER } from "@spindesk/core";
+
+await fetch("/api/servicedesk/tickets", {
+  method: "POST",
+  headers: {
+    "content-type": "application/json",
+    authorization: `Bearer ${managementApiKey}`,
+    [IMPERSONATION_HEADER]: userId,
+  },
+  body: JSON.stringify({ subject: "…", description: "…" }),
+});
+```
 
 ## Type-safe client
 

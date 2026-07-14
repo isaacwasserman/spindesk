@@ -8,24 +8,57 @@ import type {
 } from "./types.js";
 
 /**
+ * Header carrying the user id to impersonate. A request that presents it must
+ * also carry a valid management API key; the request then acts as that user
+ * with that user's own role, without a better-auth session.
+ */
+export const IMPERSONATION_HEADER = "x-impersonate-user-id";
+
+/**
  * Resolves the current service-desk identity from a service context and the
- * request headers: verifies the better-auth session and lazily provisions the
- * sidecar user row (default role "user", or "agent" when seeded via config).
+ * request headers. Normally this verifies the better-auth session, but a
+ * management-key request may instead impersonate any user via the
+ * {@link IMPERSONATION_HEADER}. Either way it lazily provisions the sidecar
+ * user row (default role "user", or "agent" when seeded via config).
  */
 export async function resolveIdentity(
 	svc: SvcCtx,
 	headers: Headers,
 ): Promise<ServiceDeskIdentity> {
 	const config = svc.config as unknown as ServiceDeskConfig;
+
+	const impersonated = headers.get(IMPERSONATION_HEADER);
+	if (impersonated) {
+		requireManagementKey(config, headers);
+		return provisionIdentity(svc, config, impersonated, null);
+	}
+
 	const session = await config.auth.api.getSession({ headers });
 	if (!session?.user?.id) {
 		throw new APIError("UNAUTHORIZED", {
 			message: "Authentication required",
 		});
 	}
-	const userId = session.user.id;
-	const email = session.user.email ?? null;
+	return provisionIdentity(
+		svc,
+		config,
+		session.user.id,
+		session.user.email ?? null,
+	);
+}
 
+/**
+ * Resolve the identity for a known better-auth user id, lazily provisioning the
+ * sidecar `users` row and physically promoting a configured agent whose row
+ * predates the config. `email` enables the `agentEmails` seed; pass null when
+ * it's unavailable (e.g. impersonation, which only has an id).
+ */
+async function provisionIdentity(
+	svc: SvcCtx,
+	config: ServiceDeskConfig,
+	userId: string,
+	email: string | null,
+): Promise<ServiceDeskIdentity> {
 	const isConfiguredAgent =
 		(config.agentUserIds?.includes(userId) ?? false) ||
 		(email !== null && (config.agentEmails?.includes(email) ?? false));
@@ -47,9 +80,6 @@ export async function resolveIdentity(
 		return { userId, role: isConfiguredAgent ? "agent" : "user" };
 	}
 	if (row.role === "user" && isConfiguredAgent) {
-		// Physically promote a configured agent whose row predates the config
-		// (or was created before they were seeded). This persists, so once
-		// promoted their id can be dropped from config.
 		await svc.db
 			.updateTable("users")
 			.set({ role: "agent" })

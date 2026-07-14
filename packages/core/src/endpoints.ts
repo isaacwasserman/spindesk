@@ -8,7 +8,7 @@ import {
 	sql,
 } from "kysely";
 import { z } from "zod";
-import { type Actor, recordActivity } from "./activity.js";
+import { recordActivity } from "./activity.js";
 import {
 	requireAgent,
 	requireManagementKey,
@@ -411,234 +411,6 @@ function headersOf(ctx: unknown): Headers {
 }
 
 /**
- * Load a ticket by UUID `id` or monotonic `number` that is owned by `userId`.
- * Throws 404 if it doesn't exist or belongs to someone else. Used by the
- * management endpoints, which scope every operation to a fixed owner.
- */
-async function getOwnedTicket(
-	svc: SvcCtx,
-	userId: string,
-	idOrNumber: string,
-): Promise<TicketRow> {
-	const base = svc.db.selectFrom("tickets").selectAll();
-	const ticket = await (/^\d+$/.test(idOrNumber)
-		? base.where("number", "=", Number(idOrNumber))
-		: base.where("id", "=", idOrNumber)
-	).executeTakeFirst();
-	if (!ticket || ticket.userId !== userId) {
-		throw new APIError("NOT_FOUND", { message: "Ticket not found" });
-	}
-	return ticket;
-}
-
-/** The activity actor for a user id, tagged with their persisted role. */
-async function actorForUser(svc: SvcCtx, userId: string): Promise<Actor> {
-	const row = await svc.db
-		.selectFrom("users")
-		.select("role")
-		.where("id", "=", userId)
-		.executeTakeFirst();
-	return { id: userId, role: (row?.role as Role) ?? "user" };
-}
-
-/** Validate, insert (with the next ticket number), enrich, and log a new ticket. */
-async function insertTicket<M extends TicketMetadata>(
-	svc: SvcCtx,
-	input: {
-		userId: string;
-		actor: Actor;
-		subject: string;
-		description: string;
-		tags: string[];
-		metadata: Record<string, unknown>;
-	},
-): Promise<Ticket<M>> {
-	validateTags(svc, input.tags);
-	await validateMetadata(svc, input.metadata);
-	const now = new Date().toISOString();
-	// Read the current max and insert atomically so concurrent creates can't
-	// hand out the same number.
-	const ticket = await svc.db.transaction().execute(async (trx) => {
-		const row = await trx
-			.selectFrom("tickets")
-			.select((eb) => eb.fn.max("number").as("max"))
-			.executeTakeFirst();
-		const next = Number(row?.max ?? 0) + 1;
-		const t = {
-			id: crypto.randomUUID(),
-			number: next,
-			userId: input.userId,
-			subject: input.subject,
-			description: input.description,
-			status: "open",
-			assigneeId: null,
-			tags: serializeTags(input.tags),
-			metadata: serializeMetadata(input.metadata),
-			archivedAt: null,
-			createdAt: now,
-			updatedAt: now,
-		};
-		await trx.insertInto("tickets").values(t).execute();
-		return t;
-	});
-	svc.logger.info(`Ticket created: ${ticket.id} (#${ticket.number})`);
-	const enriched = await enrichTicket<M>(svc, ticket);
-	await recordActivity(svc, {
-		type: "ticket-created",
-		actor: input.actor,
-		ticketId: enriched.id,
-		ticket: enriched,
-	});
-	return enriched;
-}
-
-/** Force-scoped ticket listing: Lucene filter + pagination, optionally pinned to one owner. */
-async function queryTicketList<M extends TicketMetadata>(
-	svc: SvcCtx,
-	opts: {
-		scopeUserId?: string | null;
-		q?: string;
-		limit: number;
-		offset: number;
-	},
-): Promise<{
-	tickets: Ticket<M>[];
-	total: number;
-	limit: number;
-	offset: number;
-}> {
-	const q = opts.q ?? "";
-	const nodes: FilterNode[] = [];
-	if (opts.scopeUserId) {
-		nodes.push({
-			type: "cond",
-			field: "userId",
-			op: "eq",
-			value: opts.scopeUserId,
-		});
-	}
-	if (!mentionsArchived(q)) {
-		nodes.push({ type: "cond", field: "archivedAt", op: "isNull" });
-	}
-	const parsed = parseLuceneToFilter(q);
-	if (parsed) nodes.push(parsed);
-	const filter: FilterNode = { type: "and", nodes };
-
-	let listQuery = svc.db.selectFrom("tickets").selectAll();
-	let countQuery = svc.db
-		.selectFrom("tickets")
-		.select((eb) => eb.fn.countAll().as("count"));
-	if (hasClauses(filter)) {
-		const castText = svc.db.getExecutor().adapter instanceof PostgresAdapter;
-		listQuery = listQuery.where((eb) =>
-			ticketFilterExpression(eb, filter, castText),
-		);
-		countQuery = countQuery.where((eb) =>
-			ticketFilterExpression(eb, filter, castText),
-		);
-	}
-
-	const tickets = await listQuery
-		.orderBy("createdAt", "desc")
-		.limit(opts.limit)
-		.offset(opts.offset)
-		.execute();
-	const countRow = await countQuery.executeTakeFirst();
-	return {
-		tickets: await enrichTickets<M>(svc, tickets),
-		total: Number(countRow?.count ?? 0),
-		limit: opts.limit,
-		offset: opts.offset,
-	};
-}
-
-/**
- * Persist a prepared ticket `data` patch, then record the granular activities
- * implied by the before/after diff (status, assignee, archive, content). A
- * no-op patch just re-enriches the unchanged row.
- */
-async function commitTicketUpdate<M extends TicketMetadata>(
-	svc: SvcCtx,
-	before: TicketRow,
-	data: Partial<TicketRow>,
-	actor: Actor,
-): Promise<Ticket<M>> {
-	if (Object.keys(data).length === 0) {
-		return await enrichTicket<M>(svc, before);
-	}
-	data.updatedAt = new Date().toISOString();
-	await svc.db
-		.updateTable("tickets")
-		.set(data)
-		.where("id", "=", before.id)
-		.execute();
-	const updated = await svc.db
-		.selectFrom("tickets")
-		.selectAll()
-		.where("id", "=", before.id)
-		.executeTakeFirstOrThrow();
-	const enriched = await enrichTicket<M>(svc, updated);
-
-	if (before.status !== updated.status) {
-		await recordActivity(svc, {
-			type: "ticket-status-changed",
-			actor,
-			ticketId: enriched.id,
-			ticket: enriched,
-			from: before.status as TicketStatus,
-			to: updated.status as TicketStatus,
-		});
-	}
-	if ((before.assigneeId ?? null) !== (updated.assigneeId ?? null)) {
-		await recordActivity(svc, {
-			type: "ticket-assigned",
-			actor,
-			ticketId: enriched.id,
-			ticket: enriched,
-			from: before.assigneeId ?? null,
-			to: updated.assigneeId ?? null,
-		});
-	}
-	const wasArchived = before.archivedAt != null;
-	const isArchived = updated.archivedAt != null;
-	if (wasArchived !== isArchived) {
-		await recordActivity(svc, {
-			type: isArchived ? "ticket-archived" : "ticket-unarchived",
-			actor,
-			ticketId: enriched.id,
-			ticket: enriched,
-		});
-	}
-	const changedFields: string[] = [];
-	if (before.subject !== updated.subject) changedFields.push("subject");
-	if (before.description !== updated.description) {
-		changedFields.push("description");
-	}
-	if (
-		JSON.stringify(parseTags(before.tags)) !==
-		JSON.stringify(parseTags(updated.tags))
-	) {
-		changedFields.push("tags");
-	}
-	if (
-		JSON.stringify(parseMetadata(before.metadata)) !==
-		JSON.stringify(parseMetadata(updated.metadata))
-	) {
-		changedFields.push("metadata");
-	}
-	if (changedFields.length) {
-		await recordActivity(svc, {
-			type: "ticket-updated",
-			actor,
-			ticketId: enriched.id,
-			ticket: enriched,
-			changedFields,
-		});
-	}
-	return enriched;
-}
-
-/**
  * Builds all service-desk endpoints. `defineEndpoint` is futonic's pre-bound
  * `createEndpoint` (its service-context middleware already baked in). We wrap it
  * so every handler first authenticates and attaches `serviceDesk` to the
@@ -695,14 +467,45 @@ export function createSpindeskEndpoints<
 		},
 		async (ctx) => {
 			const { serviceCtx: svc, serviceDesk } = (ctx as unknown as Ctx).context;
-			return await insertTicket<M>(svc, {
-				userId: serviceDesk.userId,
-				actor: { id: serviceDesk.userId, role: serviceDesk.role },
-				subject: ctx.body.subject,
-				description: ctx.body.description,
-				tags: ctx.body.tags ?? [],
-				metadata: ctx.body.metadata ?? {},
+			const tags = ctx.body.tags ?? [];
+			validateTags(svc, tags);
+			const metadata = ctx.body.metadata ?? {};
+			await validateMetadata(svc, metadata);
+			const now = new Date().toISOString();
+			// Read the current max and insert atomically so concurrent creates
+			// can't hand out the same number.
+			const ticket = await svc.db.transaction().execute(async (trx) => {
+				const row = await trx
+					.selectFrom("tickets")
+					.select((eb) => eb.fn.max("number").as("max"))
+					.executeTakeFirst();
+				const next = Number(row?.max ?? 0) + 1;
+				const t = {
+					id: crypto.randomUUID(),
+					number: next,
+					userId: serviceDesk.userId,
+					subject: ctx.body.subject,
+					description: ctx.body.description,
+					status: "open",
+					assigneeId: null,
+					tags: serializeTags(tags),
+					metadata: serializeMetadata(metadata),
+					archivedAt: null,
+					createdAt: now,
+					updatedAt: now,
+				};
+				await trx.insertInto("tickets").values(t).execute();
+				return t;
 			});
+			svc.logger.info(`Ticket created: ${ticket.id} (#${ticket.number})`);
+			const enriched = await enrichTicket<M>(svc, ticket);
+			await recordActivity(svc, {
+				type: "ticket-created",
+				actor: { id: serviceDesk.userId, role: serviceDesk.role },
+				ticketId: enriched.id,
+				ticket: enriched,
+			});
+			return enriched;
 		},
 	);
 
@@ -719,19 +522,62 @@ export function createSpindeskEndpoints<
 		},
 		async (ctx) => {
 			const { serviceCtx: svc, serviceDesk } = (ctx as unknown as Ctx).context;
-			const scopeUserId =
-				serviceDesk.role === "agent" ? null : serviceDesk.userId;
+			const q = ctx.query?.q ?? "";
+
+			// Pagination.
 			const limit = Math.min(
 				Math.max(Number(ctx.query?.limit) || DEFAULT_LIMIT, 1),
 				MAX_LIMIT,
 			);
 			const offset = Math.max(Number(ctx.query?.offset) || 0, 0);
-			return await queryTicketList<M>(svc, {
-				scopeUserId,
-				q: ctx.query?.q,
+
+			// Compose the filter tree: mandatory ownership scoping + a default
+			// "hide archived" clause + the user's Lucene query. Ownership can't
+			// be overridden by `q`.
+			const nodes: FilterNode[] = [];
+			if (serviceDesk.role !== "agent") {
+				nodes.push({
+					type: "cond",
+					field: "userId",
+					op: "eq",
+					value: serviceDesk.userId,
+				});
+			}
+			if (!mentionsArchived(q)) {
+				nodes.push({ type: "cond", field: "archivedAt", op: "isNull" });
+			}
+			const parsed = parseLuceneToFilter(q);
+			if (parsed) nodes.push(parsed);
+			const filter: FilterNode = { type: "and", nodes };
+
+			let listQuery = svc.db.selectFrom("tickets").selectAll();
+			let countQuery = svc.db
+				.selectFrom("tickets")
+				.select((eb) => eb.fn.countAll().as("count"));
+			if (hasClauses(filter)) {
+				const castText =
+					svc.db.getExecutor().adapter instanceof PostgresAdapter;
+				listQuery = listQuery.where((eb) =>
+					ticketFilterExpression(eb, filter, castText),
+				);
+				countQuery = countQuery.where((eb) =>
+					ticketFilterExpression(eb, filter, castText),
+				);
+			}
+
+			const tickets = await listQuery
+				.orderBy("createdAt", "desc")
+				.limit(limit)
+				.offset(offset)
+				.execute();
+			const countRow = await countQuery.executeTakeFirst();
+			const total = Number(countRow?.count ?? 0);
+			return {
+				tickets: await enrichTickets<M>(svc, tickets),
+				total,
 				limit,
 				offset,
-			});
+			};
 		},
 	);
 
@@ -820,10 +666,81 @@ export function createSpindeskEndpoints<
 				}
 				data.assigneeId = ctx.body.assigneeId;
 			}
-			return await commitTicketUpdate<M>(svc, ticket, data, {
-				id: serviceDesk.userId,
-				role: serviceDesk.role,
-			});
+			if (Object.keys(data).length === 0) {
+				return await enrichTicket<M>(svc, ticket);
+			}
+
+			data.updatedAt = new Date().toISOString();
+			await svc.db
+				.updateTable("tickets")
+				.set(data)
+				.where("id", "=", ticket.id)
+				.execute();
+			const updated = await svc.db
+				.selectFrom("tickets")
+				.selectAll()
+				.where("id", "=", ticket.id)
+				.executeTakeFirstOrThrow();
+			const enriched = await enrichTicket<M>(svc, updated);
+
+			const actor = { id: serviceDesk.userId, role: serviceDesk.role };
+			if (ticket.status !== updated.status) {
+				await recordActivity(svc, {
+					type: "ticket-status-changed",
+					actor,
+					ticketId: enriched.id,
+					ticket: enriched,
+					from: ticket.status as TicketStatus,
+					to: updated.status as TicketStatus,
+				});
+			}
+			if ((ticket.assigneeId ?? null) !== (updated.assigneeId ?? null)) {
+				await recordActivity(svc, {
+					type: "ticket-assigned",
+					actor,
+					ticketId: enriched.id,
+					ticket: enriched,
+					from: ticket.assigneeId ?? null,
+					to: updated.assigneeId ?? null,
+				});
+			}
+			const wasArchived = ticket.archivedAt != null;
+			const isArchived = updated.archivedAt != null;
+			if (wasArchived !== isArchived) {
+				await recordActivity(svc, {
+					type: isArchived ? "ticket-archived" : "ticket-unarchived",
+					actor,
+					ticketId: enriched.id,
+					ticket: enriched,
+				});
+			}
+			const changedFields: string[] = [];
+			if (ticket.subject !== updated.subject) changedFields.push("subject");
+			if (ticket.description !== updated.description) {
+				changedFields.push("description");
+			}
+			if (
+				JSON.stringify(parseTags(ticket.tags)) !==
+				JSON.stringify(parseTags(updated.tags))
+			) {
+				changedFields.push("tags");
+			}
+			if (
+				JSON.stringify(parseMetadata(ticket.metadata)) !==
+				JSON.stringify(parseMetadata(updated.metadata))
+			) {
+				changedFields.push("metadata");
+			}
+			if (changedFields.length) {
+				await recordActivity(svc, {
+					type: "ticket-updated",
+					actor,
+					ticketId: enriched.id,
+					ticket: enriched,
+					changedFields,
+				});
+			}
+			return enriched;
 		},
 	);
 
@@ -1127,201 +1044,6 @@ export function createSpindeskEndpoints<
 		},
 	);
 
-	/**
-	 * Management-only ticket CRUD on behalf of a specific user, authorized by the
-	 * management API key rather than a session. Every operation is scoped to the
-	 * `:userId` path segment: created tickets are owned by that user, and reads,
-	 * updates, and deletes only touch that user's tickets. Uses the raw
-	 * `defineEndpoint` (not the session-authed wrapper).
-	 */
-	const managementCreateTicket = defineEndpoint(
-		"/management/users/:userId/tickets",
-		{
-			method: "POST",
-			body: z.object({
-				subject: z.string().min(1),
-				description: z.string().min(1),
-				tags: z.array(z.string()).optional(),
-				metadata: metadataField<M>().optional(),
-			}),
-			output: ticketSchema,
-			metadata: {
-				openapi: {
-					summary: "Create a ticket on behalf of a user",
-					description:
-						"Create a ticket owned by the given user. Authorized by the management API key header, not a better-auth session.",
-					security: [{ managementApiKey: [] }],
-				},
-			},
-		},
-		async (ctx) => {
-			const svc = (ctx as unknown as Ctx).context.serviceCtx;
-			requireManagementKey(configOf(svc), headersOf(ctx));
-			const { userId } = ctx.params as { userId: string };
-			return await insertTicket<M>(svc, {
-				userId,
-				actor: await actorForUser(svc, userId),
-				subject: ctx.body.subject,
-				description: ctx.body.description,
-				tags: ctx.body.tags ?? [],
-				metadata: ctx.body.metadata ?? {},
-			});
-		},
-	);
-
-	const managementListTickets = defineEndpoint(
-		"/management/users/:userId/tickets",
-		{
-			method: "GET",
-			query: z.object({
-				q: z.string().optional(),
-				limit: z.string().optional(),
-				offset: z.string().optional(),
-			}),
-			output: ticketPageSchema,
-			metadata: {
-				openapi: {
-					summary: "List a user's tickets",
-					description:
-						"List tickets owned by the given user. Authorized by the management API key header, not a better-auth session.",
-					security: [{ managementApiKey: [] }],
-				},
-			},
-		},
-		async (ctx) => {
-			const svc = (ctx as unknown as Ctx).context.serviceCtx;
-			requireManagementKey(configOf(svc), headersOf(ctx));
-			const { userId } = ctx.params as { userId: string };
-			const { limit, offset } = paginate(ctx.query);
-			return await queryTicketList<M>(svc, {
-				scopeUserId: userId,
-				q: ctx.query?.q,
-				limit,
-				offset,
-			});
-		},
-	);
-
-	const managementGetTicket = defineEndpoint(
-		"/management/users/:userId/tickets/:id",
-		{
-			method: "GET",
-			output: ticketSchema,
-			metadata: {
-				openapi: {
-					summary: "Get a user's ticket",
-					description:
-						"Fetch one of the given user's tickets by id or number. Authorized by the management API key header, not a better-auth session.",
-					security: [{ managementApiKey: [] }],
-				},
-			},
-		},
-		async (ctx) => {
-			const svc = (ctx as unknown as Ctx).context.serviceCtx;
-			requireManagementKey(configOf(svc), headersOf(ctx));
-			const { userId, id } = ctx.params as { userId: string; id: string };
-			const ticket = await getOwnedTicket(svc, userId, id);
-			return await enrichTicket<M>(svc, ticket);
-		},
-	);
-
-	const managementUpdateTicket = defineEndpoint(
-		"/management/users/:userId/tickets/:id",
-		{
-			method: "PATCH",
-			body: z.object({
-				subject: z.string().min(1).optional(),
-				description: z.string().min(1).optional(),
-				tags: z.array(z.string()).optional(),
-				metadata: metadataField<M>().optional(),
-				archived: z.boolean().optional(),
-				status: z.enum(TICKET_STATUS).optional(),
-				assigneeId: z.string().nullable().optional(),
-			}),
-			output: ticketSchema,
-			metadata: {
-				openapi: {
-					summary: "Update a user's ticket",
-					description:
-						"Update one of the given user's tickets. Unlike the session API, this applies every field including the agent-only workflow fields. Authorized by the management API key header, not a better-auth session.",
-					security: [{ managementApiKey: [] }],
-				},
-			},
-		},
-		async (ctx) => {
-			const svc = (ctx as unknown as Ctx).context.serviceCtx;
-			requireManagementKey(configOf(svc), headersOf(ctx));
-			const { userId, id } = ctx.params as { userId: string; id: string };
-			const ticket = await getOwnedTicket(svc, userId, id);
-
-			const data: Partial<TicketRow> = {};
-			if (ctx.body.subject !== undefined) data.subject = ctx.body.subject;
-			if (ctx.body.description !== undefined) {
-				data.description = ctx.body.description;
-			}
-			if (ctx.body.tags !== undefined) {
-				validateTags(svc, ctx.body.tags);
-				data.tags = serializeTags(ctx.body.tags);
-			}
-			if (ctx.body.metadata !== undefined) {
-				await validateMetadata(svc, ctx.body.metadata);
-				data.metadata = serializeMetadata(ctx.body.metadata);
-			}
-			if (ctx.body.archived !== undefined) {
-				data.archivedAt = ctx.body.archived ? new Date().toISOString() : null;
-			}
-			if (ctx.body.status !== undefined) data.status = ctx.body.status;
-			if (ctx.body.assigneeId !== undefined) {
-				data.assigneeId = ctx.body.assigneeId;
-			}
-			return await commitTicketUpdate<M>(
-				svc,
-				ticket,
-				data,
-				await actorForUser(svc, userId),
-			);
-		},
-	);
-
-	const managementDeleteTicket = defineEndpoint(
-		"/management/users/:userId/tickets/:id",
-		{
-			method: "DELETE",
-			output: okSchema,
-			metadata: {
-				openapi: {
-					summary: "Delete a user's ticket",
-					description:
-						"Permanently delete one of the given user's tickets, along with its comments and attachments. Authorized by the management API key header, not a better-auth session.",
-					security: [{ managementApiKey: [] }],
-				},
-			},
-		},
-		async (ctx) => {
-			const svc = (ctx as unknown as Ctx).context.serviceCtx;
-			requireManagementKey(configOf(svc), headersOf(ctx));
-			const { userId, id } = ctx.params as { userId: string; id: string };
-			const ticket = await getOwnedTicket(svc, userId, id);
-			await svc.db.transaction().execute(async (trx) => {
-				await trx
-					.deleteFrom("attachments")
-					.where("ticketId", "=", ticket.id)
-					.execute();
-				await trx
-					.deleteFrom("comments")
-					.where("ticketId", "=", ticket.id)
-					.execute();
-				await trx.deleteFrom("tickets").where("id", "=", ticket.id).execute();
-			});
-			await recordActivity(svc, {
-				type: "ticket-deleted",
-				actor: await actorForUser(svc, userId),
-				ticketId: ticket.id,
-			});
-			return { ok: true };
-		},
-	);
-
 	/** Available tag vocabulary, for the host UI's tag picker. */
 	const listTags = createEndpoint(
 		"/tags",
@@ -1620,11 +1342,6 @@ export function createSpindeskEndpoints<
 		deleteComment: deleteComment,
 		setUserRole: setUserRole,
 		promoteAgent: promoteAgent,
-		managementCreateTicket: managementCreateTicket,
-		managementListTickets: managementListTickets,
-		managementGetTicket: managementGetTicket,
-		managementUpdateTicket: managementUpdateTicket,
-		managementDeleteTicket: managementDeleteTicket,
 		uploadAttachment: uploadAttachment,
 		listAttachments: listAttachments,
 		downloadAttachment: downloadAttachment,
