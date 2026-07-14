@@ -1,10 +1,17 @@
 import { createFutonicServiceConstructor, defineService } from "futonic";
 import { z } from "zod";
+import type { OnActivity } from "./activity.js";
 import { createSpindeskEndpoints } from "./endpoints.js";
 import { serviceDeskSchema } from "./schema.js";
 import type { AuthLike } from "./types.js";
 
 export type { Role } from "./types.js";
+export type {
+	Actor,
+	OnActivity,
+	SpindeskActivity,
+	SpindeskActivityType,
+} from "./activity.js";
 
 // Re-export the type surface consumers must name (via `@spindesk/core`) to stay
 // portable under plain `tsc` — no bundling, no peer deps. `better-call` is
@@ -22,6 +29,9 @@ const configSchema = z.object({
 	agentEmails: z.array(z.string()).optional(),
 	availableTags: z.array(z.string()).optional(),
 	maxAttachmentBytes: z.number().optional(),
+	onActivity: z
+		.custom<OnActivity>((value) => value == null || typeof value === "function")
+		.optional(),
 });
 
 export const spindeskServiceDefinition = defineService({

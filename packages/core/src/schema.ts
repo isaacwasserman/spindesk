@@ -101,6 +101,27 @@ export const serviceDeskSchema = {
 				authorRole: { type: "string" },
 				body: { type: "string" },
 				createdAt: { type: "string" },
+				// Set when the comment is edited; null/absent for never-edited comments.
+				updatedAt: { type: "string", optional: true },
+			},
+		},
+		// Denormalized activity log: one row per ticketing activity (created,
+		// updated, commented, ...). No FKs — the log outlives the rows it
+		// references. Each row fills only the id columns its activity type has;
+		// variant-specific payload lands in the opaque JSON `data` column.
+		activities: {
+			name: "activities",
+			columns: {
+				id: { type: "string", primaryKey: true },
+				type: { type: "string" },
+				actorId: { type: "string" },
+				actorRole: { type: "string" },
+				ticketId: { type: "string", optional: true },
+				commentId: { type: "string", optional: true },
+				attachmentId: { type: "string", optional: true },
+				userId: { type: "string", optional: true },
+				data: { type: "json", optional: true },
+				createdAt: { type: "string" },
 			},
 		},
 	},
