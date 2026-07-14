@@ -303,7 +303,12 @@ function validateTags(svc: SvcCtx, tags: string[]): void {
 		}
 	}
 }
-/** Validate metadata against the configured Standard Schema (if any); 400 on failure. */
+/**
+ * Validate metadata against the configured Standard Schema (if any); 400 on
+ * failure. A configured schema is a guarantee, so this runs against the value
+ * that will be stored — `{}` when the caller omits metadata — which makes
+ * metadata effectively required unless the schema accepts `{}`.
+ */
 async function validateMetadata(svc: SvcCtx, metadata: unknown): Promise<void> {
 	const schema = configOf(svc).metadataSchema;
 	if (!schema) return;
@@ -314,20 +319,6 @@ async function validateMetadata(svc: SvcCtx, metadata: unknown): Promise<void> {
 			message: `Invalid metadata: ${detail}`,
 		});
 	}
-}
-/**
- * A configured schema is a guarantee, so a ticket must be created with metadata
- * that satisfies it. Metadata may be omitted only when the schema accepts an
- * empty value (`{}`, `null`, or `undefined`); otherwise creation is a 400.
- */
-async function requireMetadataUnlessEmptyAllowed(svc: SvcCtx): Promise<void> {
-	const schema = configOf(svc).metadataSchema;
-	if (!schema) return;
-	for (const empty of [undefined, null, {}]) {
-		const result = await schema["~standard"].validate(empty);
-		if (!result.issues) return;
-	}
-	throw new APIError("BAD_REQUEST", { message: "Metadata is required" });
 }
 
 /** Attach live owner/assignee display names (from better-auth) + tags array to tickets. */
@@ -478,12 +469,8 @@ export function createSpindeskEndpoints<
 			const { serviceCtx: svc, serviceDesk } = (ctx as unknown as Ctx).context;
 			const tags = ctx.body.tags ?? [];
 			validateTags(svc, tags);
-			if (ctx.body.metadata !== undefined) {
-				await validateMetadata(svc, ctx.body.metadata);
-			} else {
-				await requireMetadataUnlessEmptyAllowed(svc);
-			}
 			const metadata = ctx.body.metadata ?? {};
+			await validateMetadata(svc, metadata);
 			const now = new Date().toISOString();
 			// Read the current max and insert atomically so concurrent creates
 			// can't hand out the same number.

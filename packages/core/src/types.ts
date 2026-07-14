@@ -67,8 +67,8 @@ export type ServiceDeskConfig = {
 	/**
 	 * Optional Standard Schema for ticket `metadata`. When supplied it is treated
 	 * as a guarantee: metadata is validated against it at runtime (400 on
-	 * failure) and required on create — unless the schema itself accepts an empty
-	 * value (`{}`, `null`, or `undefined`). Updates validate metadata only when
+	 * failure) and required on create — unless the schema accepts `{}`, in which
+	 * case the caller may omit the field. Updates validate metadata only when
 	 * included. `createSpindesk` also infers the metadata type from it, so the
 	 * type flows end-to-end without an explicit type argument. Omit it to keep
 	 * metadata an unvalidated open record.
