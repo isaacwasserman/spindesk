@@ -6,11 +6,12 @@ import {
 } from "futonic";
 import { z } from "zod";
 import type { OnActivity } from "./activity.js";
-import { createSpindeskEndpoints } from "./endpoints.js";
+import { type TicketMetadata, createSpindeskEndpoints } from "./endpoints.js";
 import { serviceDeskSchema } from "./schema.js";
 import type { AuthLike } from "./types.js";
 
 export type { Role } from "./types.js";
+export type { Ticket, TicketMetadata } from "./endpoints.js";
 export type {
 	Actor,
 	OnActivity,
@@ -47,7 +48,7 @@ export const spindeskServiceDefinition = defineService({
 	endpoints: (defineEndpoint) => createSpindeskEndpoints(defineEndpoint),
 });
 
-const createSpindeskService = createFutonicServiceConstructor(
+const spindeskConstructor = createFutonicServiceConstructor(
 	spindeskServiceDefinition,
 );
 
@@ -90,16 +91,35 @@ function withAuthDocs(options: HandlerOptions): HandlerOptions {
 	};
 }
 
-export const createSpindesk: typeof createSpindeskService = (args) => {
-	const service = createSpindeskService(args);
-	return {
-		...service,
-		createHandler: (options) => service.createHandler(withAuthDocs(options)),
-	};
-};
-
 /** Options accepted by the service factory (`config` + `database`). */
-export type SpindeskArgs = Parameters<typeof createSpindesk>[0];
+export type SpindeskArgs = Parameters<typeof spindeskConstructor>[0];
+
+/**
+ * The service's endpoints, viewed with ticket `metadata` typed as `M`. The
+ * runtime endpoints are metadata-agnostic; `M` is the compile-time shape the
+ * caller pins via {@link createSpindesk}.
+ */
+export type SpindeskEndpoints<M extends TicketMetadata = TicketMetadata> =
+	ReturnType<typeof createSpindeskEndpoints<M>>;
 
 /** Endpoints type for the type-safe futonic/better-call client. */
-export type SpindeskRouter = ReturnType<typeof createSpindesk>["endpoints"];
+export type SpindeskRouter<M extends TicketMetadata = TicketMetadata> =
+	SpindeskEndpoints<M>;
+
+/**
+ * Build the service. Pass a metadata type argument — `createSpindesk<MyMeta>(…)`
+ * — to type ticket `metadata` end-to-end: the create/update request bodies, the
+ * ticket responses, and the {@link createSpindeskClient} results all surface
+ * `MyMeta`. Defaults to an open record, so plain `createSpindesk(…)` is
+ * unchanged. Validation stays shape-agnostic; the type is a view you vouch for.
+ */
+export function createSpindesk<M extends TicketMetadata = TicketMetadata>(
+	options: SpindeskArgs,
+) {
+	const service = spindeskConstructor<SpindeskEndpoints<M>>(options);
+	return {
+		...service,
+		createHandler: (handlerOptions: HandlerOptions) =>
+			service.createHandler(withAuthDocs(handlerOptions)),
+	};
+}
