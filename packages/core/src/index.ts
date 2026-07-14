@@ -11,6 +11,7 @@ import { type TicketMetadata, createSpindeskEndpoints } from "./endpoints.js";
 import { serviceDeskSchema } from "./schema.js";
 import type { AuthLike } from "./types.js";
 
+export { IMPERSONATION_HEADER } from "./auth-middleware.js";
 export type { Role } from "./types.js";
 export type { Ticket, TicketMetadata } from "./endpoints.js";
 export type {

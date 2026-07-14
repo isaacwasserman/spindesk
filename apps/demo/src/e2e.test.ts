@@ -6,7 +6,7 @@
  * minted with the better-auth `testUtils` plugin — no manual sign-in flow.
  */
 import { beforeEach, describe, expect, test } from "bun:test";
-import type { TicketMetadataSchema } from "@spindesk/core";
+import { IMPERSONATION_HEADER, type TicketMetadataSchema } from "@spindesk/core";
 import { type App, type CreateAppOptions, createApp } from "./host/server";
 
 // Fixed ids so we can seed agentUserIds before the users exist.
@@ -722,87 +722,97 @@ describe("service-desk", () => {
 		).toBe(401);
 	});
 
-	test("management API key drives ticket CRUD on behalf of a user", async () => {
+	test("management key impersonates any user via header, acting as that user", async () => {
 		const KEY = "secret-key";
 		const f = await setup({ managementApiKey: KEY });
 		const mApp = f.app;
 		const mH = f.headers;
-		const keyed = (key = KEY) => new Headers({ authorization: `Bearer ${key}` });
-		const base = `${MOUNT}/management/users/${USER_ID}/tickets`;
-		const otherBase = `${MOUNT}/management/users/${OTHER_ID}/tickets`;
+		const imp = (userId: string, key = KEY) =>
+			new Headers({
+				authorization: `Bearer ${key}`,
+				[IMPERSONATION_HEADER]: userId,
+			});
+		const tickets = `${MOUNT}/tickets`;
 
-		// missing/wrong key rejected
+		// impersonation requires a valid management key
 		expect(
-			(await post(mApp, base, keyed("nope"), { subject: "s", description: "d" }))
-				.status,
+			(
+				await post(
+					mApp,
+					tickets,
+					new Headers({ [IMPERSONATION_HEADER]: USER_ID }),
+					{ subject: "s", description: "d" },
+				)
+			).status,
 		).toBe(401);
-		expect((await call(mApp, base)).status).toBe(401);
+		expect(
+			(
+				await post(mApp, tickets, imp(USER_ID, "nope"), {
+					subject: "s",
+					description: "d",
+				})
+			).status,
+		).toBe(401);
 
-		// create a ticket owned by USER_ID
+		// create a ticket as USER_ID; it's owned by them and visible in their session
 		const created = await (
-			await post(mApp, base, keyed(), {
+			await post(mApp, tickets, imp(USER_ID), {
 				subject: "on behalf",
 				description: "d",
-				tags: ["billing"],
 			})
 		).json() as any;
 		expect(created.userId).toBe(USER_ID);
-		expect(created.tags).toEqual(["billing"]);
-
-		// the user sees it as their own ticket through the session API
-		const mine = await (
-			await call(mApp, `${MOUNT}/tickets`, mH[USER_ID])
-		).json() as any;
+		const mine = await (await call(mApp, tickets, mH[USER_ID])).json() as any;
 		expect(mine.total).toBe(1);
 		expect(mine.tickets[0].id).toBe(created.id);
 
-		// a ticket for a different user, to prove the listing is scoped
+		// acts with the impersonated user's own role: a plain user can't set an
+		// agent-only status, nor read another user's ticket
+		expect(
+			(
+				await patch(mApp, `${tickets}/${created.id}`, imp(USER_ID), {
+					status: "pending",
+				})
+			).status,
+		).toBe(403);
 		const otherTicket = await (
-			await post(mApp, otherBase, keyed(), { subject: "other", description: "d" })
-		).json() as any;
-		const listed = await (await call(mApp, base, keyed())).json() as any;
-		expect(listed.total).toBe(1);
-		expect(listed.tickets[0].userId).toBe(USER_ID);
-
-		// get by id and by number; another user's ticket is 404 on this path
-		expect(
-			((await (await call(mApp, `${base}/${created.id}`, keyed())).json()) as any)
-				.id,
-		).toBe(created.id);
-		expect(
-			((await (
-				await call(mApp, `${base}/${created.number}`, keyed())
-			).json()) as any).id,
-		).toBe(created.id);
-		expect(
-			(await call(mApp, `${base}/${otherTicket.id}`, keyed())).status,
-		).toBe(404);
-
-		// update applies agent-only workflow fields
-		const updated = await (
-			await patch(mApp, `${base}/${created.id}`, keyed(), {
-				status: "pending",
-				assigneeId: AGENT_ID,
+			await post(mApp, tickets, imp(OTHER_ID), {
+				subject: "other",
+				description: "d",
 			})
 		).json() as any;
-		expect(updated.status).toBe("pending");
-		expect(updated.assigneeId).toBe(AGENT_ID);
-
-		// delete removes the ticket
 		expect(
-			((await (await del(mApp, `${base}/${created.id}`, keyed())).json()) as any)
-				.ok,
-		).toBe(true);
-		expect((await call(mApp, `${base}/${created.id}`, keyed())).status).toBe(404);
+			(await call(mApp, `${tickets}/${otherTicket.id}`, imp(USER_ID))).status,
+		).toBe(403);
+
+		// impersonating an agent gets agent powers (any status, sees all tickets)
+		expect(
+			(
+				await patch(mApp, `${tickets}/${created.id}`, imp(AGENT_ID), {
+					status: "pending",
+				})
+			).status,
+		).toBe(200);
+		const all = await (await call(mApp, tickets, imp(AGENT_ID))).json() as any;
+		expect(all.total).toBe(2);
+
+		// impersonation reaches every endpoint, including attachment upload
+		const up = await call(mApp, `${tickets}/${created.id}/attachments`, imp(USER_ID), {
+			method: "POST",
+			body: new Uint8Array([1, 2, 3]),
+			headers: { "x-filename": "note.txt" },
+		});
+		expect(up.status).toBe(200);
+		expect((await up.json() as any).uploadedBy).toBe(USER_ID);
 	});
 
-	test("management ticket API is disabled when no key is configured", async () => {
+	test("impersonation is rejected when no management key is configured", async () => {
 		expect(
 			(
 				await post(
 					app,
-					`${MOUNT}/management/users/${USER_ID}/tickets`,
-					new Headers({ authorization: "Bearer anything" }),
+					`${MOUNT}/tickets`,
+					new Headers({ [IMPERSONATION_HEADER]: USER_ID }),
 					{ subject: "s", description: "d" },
 				)
 			).status,
