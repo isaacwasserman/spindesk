@@ -6,6 +6,7 @@
  * minted with the better-auth `testUtils` plugin — no manual sign-in flow.
  */
 import { beforeEach, describe, expect, test } from "bun:test";
+import type { TicketMetadataSchema } from "@spindesk/core";
 import { type App, type CreateAppOptions, createApp } from "./host/server";
 
 // Fixed ids so we can seed agentUserIds before the users exist.
@@ -438,6 +439,66 @@ describe("service-desk", () => {
 			})
 		).json() as any;
 		expect(noMeta.metadata).toEqual({});
+	});
+
+	test("config metadataSchema validates metadata on create and update", async () => {
+		const metadataSchema: TicketMetadataSchema<{
+			source: "email" | "web";
+			priority: number;
+		}> = {
+			"~standard": {
+				version: 1,
+				vendor: "spindesk-test",
+				validate: (value) => {
+					const v = (value ?? {}) as Record<string, unknown>;
+					const issues: { message: string }[] = [];
+					if (v.source !== "email" && v.source !== "web") {
+						issues.push({ message: "source must be 'email' or 'web'" });
+					}
+					if (typeof v.priority !== "number") {
+						issues.push({ message: "priority must be a number" });
+					}
+					return issues.length
+						? { issues }
+						: { value: v as { source: "email" | "web"; priority: number } };
+				},
+			},
+		};
+		const f = await setup({ metadataSchema });
+		const sApp = f.app;
+		const sH = f.headers;
+
+		const ok = await post(sApp, `${MOUNT}/tickets`, sH[USER_ID], {
+			subject: "s",
+			description: "d",
+			metadata: { source: "web", priority: 2 },
+		});
+		expect(ok.ok).toBe(true);
+		const created = (await ok.json()) as any;
+		expect(created.metadata).toEqual({ source: "web", priority: 2 });
+
+		const badCreate = await post(sApp, `${MOUNT}/tickets`, sH[USER_ID], {
+			subject: "s",
+			description: "d",
+			metadata: { source: "carrier-pigeon", priority: 2 },
+		});
+		expect(badCreate.status).toBe(400);
+
+		const badUpdate = await patch(
+			sApp,
+			`${MOUNT}/tickets/${created.id}`,
+			sH[USER_ID],
+			{ metadata: { source: "web", priority: "high" } },
+		);
+		expect(badUpdate.status).toBe(400);
+
+		// Metadata stays optional: omitting it is still allowed.
+		const noMeta = await post(sApp, `${MOUNT}/tickets`, sH[USER_ID], {
+			subject: "s",
+			description: "d",
+		});
+		expect(noMeta.ok).toBe(true);
+		expect(((await noMeta.json()) as any).metadata).toEqual({});
 	});
 
 	test("Lucene filters: status, tag, AND/OR/NOT", async () => {
