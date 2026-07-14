@@ -399,6 +399,41 @@ describe("service-desk", () => {
 		expect(arch.tickets.find((x: any) => x.id === t.id)).toBeDefined();
 	});
 
+	test("arbitrary metadata round-trips on create and update", async () => {
+		const created = await (
+			await post(app, `${MOUNT}/tickets`, H[USER_ID], {
+				subject: "meta",
+				description: "d",
+				metadata: { source: "email", priority: 3, nested: { a: 1 } },
+			})
+		).json() as any;
+		expect(created.metadata).toEqual({
+			source: "email",
+			priority: 3,
+			nested: { a: 1 },
+		});
+
+		const fetched = await (
+			await call(app, `${MOUNT}/tickets/${created.id}`, H[USER_ID])
+		).json() as any;
+		expect(fetched.metadata).toEqual(created.metadata);
+
+		const updated = await (
+			await patch(app, `${MOUNT}/tickets/${created.id}`, H[USER_ID], {
+				metadata: { source: "web" },
+			})
+		).json() as any;
+		expect(updated.metadata).toEqual({ source: "web" });
+
+		const noMeta = await (
+			await post(app, `${MOUNT}/tickets`, H[USER_ID], {
+				subject: "no meta",
+				description: "d",
+			})
+		).json() as any;
+		expect(noMeta.metadata).toEqual({});
+	});
+
 	test("Lucene filters: status, tag, AND/OR/NOT", async () => {
 		const mk = (subject: string, tags: string[]) =>
 			post(app, `${MOUNT}/tickets`, H[USER_ID], {

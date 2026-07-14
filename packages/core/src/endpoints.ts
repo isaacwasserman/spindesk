@@ -52,6 +52,7 @@ const ticketSchema = z.object({
 	assigneeId: z.string().nullable(),
 	assigneeName: z.string().nullable(),
 	tags: z.array(z.string()),
+	metadata: z.record(z.string(), z.unknown()),
 	archivedAt: z.string().nullable(),
 	createdAt: z.string(),
 	updatedAt: z.string(),
@@ -221,6 +222,26 @@ function parseTags(value: unknown): string[] {
 		return [];
 	}
 }
+/** Metadata is stored as a JSON object of arbitrary key/value pairs. */
+function serializeMetadata(metadata: Record<string, unknown>): string | null {
+	const keys = Object.keys(metadata);
+	return keys.length ? JSON.stringify(metadata) : null;
+}
+function parseMetadata(value: unknown): Record<string, unknown> {
+	// A `json`/`jsonb` column comes back already parsed (an object); a text
+	// column (or the in-memory serialized value) comes back as a JSON string.
+	const asObject = (v: unknown): Record<string, unknown> =>
+		v && typeof v === "object" && !Array.isArray(v)
+			? (v as Record<string, unknown>)
+			: {};
+	if (typeof value !== "string") return asObject(value);
+	if (!value) return {};
+	try {
+		return asObject(JSON.parse(value));
+	} catch {
+		return {};
+	}
+}
 /** Validate tags against the configured vocabulary (if any); 400 on unknown. */
 function validateTags(svc: SvcCtx, tags: string[]): void {
 	const allowed = configOf(svc).availableTags;
@@ -245,6 +266,7 @@ async function enrichTickets(
 		...t,
 		status: t.status as Ticket["status"],
 		tags: parseTags(t.tags),
+		metadata: parseMetadata(t.metadata),
 		userName: names.get(t.userId)?.name ?? null,
 		assigneeName: t.assigneeId ? (names.get(t.assigneeId)?.name ?? null) : null,
 	}));
@@ -342,6 +364,7 @@ export function createSpindeskEndpoints(
 				subject: z.string().min(1),
 				description: z.string().min(1),
 				tags: z.array(z.string()).optional(),
+				metadata: z.record(z.string(), z.unknown()).optional(),
 			}),
 			output: ticketSchema,
 		},
@@ -349,6 +372,7 @@ export function createSpindeskEndpoints(
 			const { serviceCtx: svc, serviceDesk } = (ctx as unknown as Ctx).context;
 			const tags = ctx.body.tags ?? [];
 			validateTags(svc, tags);
+			const metadata = ctx.body.metadata ?? {};
 			const now = new Date().toISOString();
 			// Read the current max and insert atomically so concurrent creates
 			// can't hand out the same number.
@@ -367,6 +391,7 @@ export function createSpindeskEndpoints(
 					status: "open",
 					assigneeId: null,
 					tags: serializeTags(tags),
+					metadata: serializeMetadata(metadata),
 					archivedAt: null,
 					createdAt: now,
 					updatedAt: now,
@@ -471,6 +496,7 @@ export function createSpindeskEndpoints(
 				subject: z.string().min(1).optional(),
 				description: z.string().min(1).optional(),
 				tags: z.array(z.string()).optional(),
+				metadata: z.record(z.string(), z.unknown()).optional(),
 				archived: z.boolean().optional(),
 				// Agent-only workflow fields.
 				status: z.enum(TICKET_STATUS).optional(),
@@ -493,6 +519,7 @@ export function createSpindeskEndpoints(
 				ctx.body.subject !== undefined ||
 				ctx.body.description !== undefined ||
 				ctx.body.tags !== undefined ||
+				ctx.body.metadata !== undefined ||
 				ctx.body.archived !== undefined;
 			if (editsContent && !isOwner && !isAgent) {
 				throw new APIError("FORBIDDEN", { message: "Not your ticket" });
@@ -504,6 +531,9 @@ export function createSpindeskEndpoints(
 			if (ctx.body.tags !== undefined) {
 				validateTags(svc, ctx.body.tags);
 				data.tags = serializeTags(ctx.body.tags);
+			}
+			if (ctx.body.metadata !== undefined) {
+				data.metadata = serializeMetadata(ctx.body.metadata);
 			}
 			if (ctx.body.archived !== undefined) {
 				data.archivedAt = ctx.body.archived ? new Date().toISOString() : null;
