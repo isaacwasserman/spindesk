@@ -7,9 +7,6 @@ import type {
 	SvcCtx,
 } from "./types.js";
 
-/** Header carrying the management API key on management-only endpoints. */
-export const MANAGEMENT_KEY_HEADER = "x-management-api-key";
-
 /**
  * Resolves the current service-desk identity from a service context and the
  * request headers: verifies the better-auth session and lazily provisions the
@@ -76,17 +73,24 @@ function keysMatch(provided: string, expected: string): boolean {
 	return a.length === b.length && timingSafeEqual(a, b);
 }
 
+function bearerToken(headers: Headers): string | null {
+	const header = headers.get("authorization");
+	if (!header) return null;
+	const [scheme, token] = header.split(" ");
+	return scheme?.toLowerCase() === "bearer" && token ? token : null;
+}
+
 /**
- * Throws 401 unless the request carries the configured management API key in the
- * `x-management-api-key` header. When no key is configured, all callers are
- * rejected (the management surface is disabled).
+ * Throws 401 unless the request carries the configured management API key as an
+ * `Authorization: Bearer <key>` token. When no key is configured, all callers
+ * are rejected (the management surface is disabled).
  */
 export function requireManagementKey(
 	config: ServiceDeskConfig,
 	headers: Headers,
 ): void {
 	const expected = config.managementApiKey;
-	const provided = headers.get(MANAGEMENT_KEY_HEADER);
+	const provided = bearerToken(headers);
 	if (!expected || !provided || !keysMatch(provided, expected)) {
 		throw new APIError("UNAUTHORIZED", {
 			message: "Invalid management API key",

@@ -58,7 +58,7 @@ export type ServiceDeskConfig = {
 	/**
 	 * Shared secret that authorizes management-only endpoints (e.g. promoting a
 	 * user to agent by id or email) without a better-auth session. Callers pass
-	 * it in the `x-management-api-key` header.
+	 * it as an `Authorization: Bearer <key>` token.
 	 */
 	managementApiKey?: string;
 	/** Allowed tag vocabulary; ticket tags are validated against this. */
