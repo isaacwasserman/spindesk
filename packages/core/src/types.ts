@@ -1,3 +1,4 @@
+import type { StandardSchemaV1 } from "@standard-schema/spec";
 import type {
 	DefineEndpoint,
 	KyselyFromServiceDBSchema,
@@ -63,6 +64,16 @@ export type ServiceDeskConfig = {
 	managementApiKey?: string;
 	/** Allowed tag vocabulary; ticket tags are validated against this. */
 	availableTags?: string[];
+	/**
+	 * Optional Standard Schema for ticket `metadata`. When supplied it is treated
+	 * as a guarantee: metadata is validated against it at runtime (400 on
+	 * failure) and required on create — unless the schema accepts `{}`, in which
+	 * case the caller may omit the field. Updates validate metadata only when
+	 * included. `createSpindesk` also infers the metadata type from it, so the
+	 * type flows end-to-end without an explicit type argument. Omit it to keep
+	 * metadata an unvalidated open record.
+	 */
+	metadataSchema?: StandardSchemaV1;
 	/** Max attachment size in bytes (default 5 MiB). */
 	maxAttachmentBytes?: number;
 	/**

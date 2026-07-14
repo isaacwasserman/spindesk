@@ -303,6 +303,23 @@ function validateTags(svc: SvcCtx, tags: string[]): void {
 		}
 	}
 }
+/**
+ * Validate metadata against the configured Standard Schema (if any); 400 on
+ * failure. A configured schema is a guarantee, so this runs against the value
+ * that will be stored — `{}` when the caller omits metadata — which makes
+ * metadata effectively required unless the schema accepts `{}`.
+ */
+async function validateMetadata(svc: SvcCtx, metadata: unknown): Promise<void> {
+	const schema = configOf(svc).metadataSchema;
+	if (!schema) return;
+	const result = await schema["~standard"].validate(metadata);
+	if (result.issues) {
+		const detail = result.issues.map((issue) => issue.message).join(", ");
+		throw new APIError("BAD_REQUEST", {
+			message: `Invalid metadata: ${detail}`,
+		});
+	}
+}
 
 /** Attach live owner/assignee display names (from better-auth) + tags array to tickets. */
 async function enrichTickets<M extends TicketMetadata>(
@@ -453,6 +470,7 @@ export function createSpindeskEndpoints<
 			const tags = ctx.body.tags ?? [];
 			validateTags(svc, tags);
 			const metadata = ctx.body.metadata ?? {};
+			await validateMetadata(svc, metadata);
 			const now = new Date().toISOString();
 			// Read the current max and insert atomically so concurrent creates
 			// can't hand out the same number.
@@ -620,6 +638,7 @@ export function createSpindeskEndpoints<
 				data.tags = serializeTags(ctx.body.tags);
 			}
 			if (ctx.body.metadata !== undefined) {
+				await validateMetadata(svc, ctx.body.metadata);
 				data.metadata = serializeMetadata(ctx.body.metadata);
 			}
 			if (ctx.body.archived !== undefined) {

@@ -6,6 +6,7 @@
  * minted with the better-auth `testUtils` plugin — no manual sign-in flow.
  */
 import { beforeEach, describe, expect, test } from "bun:test";
+import type { TicketMetadataSchema } from "@spindesk/core";
 import { type App, type CreateAppOptions, createApp } from "./host/server";
 
 // Fixed ids so we can seed agentUserIds before the users exist.
@@ -438,6 +439,98 @@ describe("service-desk", () => {
 			})
 		).json() as any;
 		expect(noMeta.metadata).toEqual({});
+	});
+
+	test("config metadataSchema validates metadata on create and update", async () => {
+		const metadataSchema: TicketMetadataSchema<{
+			source: "email" | "web";
+			priority: number;
+		}> = {
+			"~standard": {
+				version: 1,
+				vendor: "spindesk-test",
+				validate: (value) => {
+					const v = (value ?? {}) as Record<string, unknown>;
+					const issues: { message: string }[] = [];
+					if (v.source !== "email" && v.source !== "web") {
+						issues.push({ message: "source must be 'email' or 'web'" });
+					}
+					if (typeof v.priority !== "number") {
+						issues.push({ message: "priority must be a number" });
+					}
+					return issues.length
+						? { issues }
+						: { value: v as { source: "email" | "web"; priority: number } };
+				},
+			},
+		};
+		const f = await setup({ metadataSchema });
+		const sApp = f.app;
+		const sH = f.headers;
+
+		const ok = await post(sApp, `${MOUNT}/tickets`, sH[USER_ID], {
+			subject: "s",
+			description: "d",
+			metadata: { source: "web", priority: 2 },
+		});
+		expect(ok.ok).toBe(true);
+		const created = (await ok.json()) as any;
+		expect(created.metadata).toEqual({ source: "web", priority: 2 });
+
+		const badCreate = await post(sApp, `${MOUNT}/tickets`, sH[USER_ID], {
+			subject: "s",
+			description: "d",
+			metadata: { source: "carrier-pigeon", priority: 2 },
+		});
+		expect(badCreate.status).toBe(400);
+
+		const badUpdate = await patch(
+			sApp,
+			`${MOUNT}/tickets/${created.id}`,
+			sH[USER_ID],
+			{ metadata: { source: "web", priority: "high" } },
+		);
+		expect(badUpdate.status).toBe(400);
+
+		// A configured schema is a guarantee: this one rejects empty metadata, so
+		// creating a ticket without metadata is a 400.
+		const missing = await post(sApp, `${MOUNT}/tickets`, sH[USER_ID], {
+			subject: "s",
+			description: "d",
+		});
+		expect(missing.status).toBe(400);
+	});
+
+	test("a metadataSchema that accepts empty keeps metadata optional", async () => {
+		// Accepts `{}`/absence, so metadata is not required on create.
+		const metadataSchema: TicketMetadataSchema<{ note?: string }> = {
+			"~standard": {
+				version: 1,
+				vendor: "spindesk-test",
+				validate: (value) => {
+					const v = (value ?? {}) as Record<string, unknown>;
+					if (v.note !== undefined && typeof v.note !== "string") {
+						return { issues: [{ message: "note must be a string" }] };
+					}
+					return { value: v as { note?: string } };
+				},
+			},
+		};
+		const f = await setup({ metadataSchema });
+
+		const noMeta = await post(f.app, `${MOUNT}/tickets`, f.headers[USER_ID], {
+			subject: "s",
+			description: "d",
+		});
+		expect(noMeta.ok).toBe(true);
+		expect(((await noMeta.json()) as any).metadata).toEqual({});
+
+		const bad = await post(f.app, `${MOUNT}/tickets`, f.headers[USER_ID], {
+			subject: "s",
+			description: "d",
+			metadata: { note: 123 },
+		});
+		expect(bad.status).toBe(400);
 	});
 
 	test("Lucene filters: status, tag, AND/OR/NOT", async () => {

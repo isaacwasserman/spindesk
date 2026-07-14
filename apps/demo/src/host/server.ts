@@ -9,6 +9,7 @@ import {
 	createSpindesk,
 	type OnActivity,
 	type SpindeskArgs,
+	type TicketMetadataSchema,
 } from "@spindesk/core";
 import { type Auth, createAuth } from "./auth";
 
@@ -73,6 +74,8 @@ export interface CreateAppOptions {
 	managementApiKey?: string;
 	/** Allowed tag vocabulary passed to the service. */
 	availableTags?: string[];
+	/** Optional Standard Schema validating (and typing) ticket metadata. */
+	metadataSchema?: TicketMetadataSchema;
 	/** Mount path for the service router. */
 	mount?: string;
 	/** Host hook invoked for every ticketing activity. */
@@ -95,6 +98,7 @@ export async function createApp(opts: CreateAppOptions = {}): Promise<App> {
 		agentUserIds = [],
 		managementApiKey,
 		availableTags,
+		metadataSchema,
 		mount = "/api/servicedesk",
 		onActivity,
 	} = opts;
@@ -121,7 +125,14 @@ export async function createApp(opts: CreateAppOptions = {}): Promise<App> {
 			connection: db as unknown as ServiceConnection,
 			provider: "sqlite",
 		},
-		config: { auth, agentUserIds, managementApiKey, availableTags, onActivity },
+		config: {
+			auth,
+			agentUserIds,
+			managementApiKey,
+			availableTags,
+			metadataSchema,
+			onActivity,
+		},
 	});
 	const handler = service.createHandler({
 		basePath: mount,
