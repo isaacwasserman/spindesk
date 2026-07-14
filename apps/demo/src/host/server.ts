@@ -5,7 +5,11 @@
  */
 import { Database } from "bun:sqlite";
 import { getMigrations } from "better-auth/db/migration";
-import { createSpindesk, type SpindeskArgs } from "@spindesk/core";
+import {
+	createSpindesk,
+	type OnActivity,
+	type SpindeskArgs,
+} from "@spindesk/core";
 import { type Auth, createAuth } from "./auth";
 
 /** The raw connection type the service accepts (a Kysely SqliteDatabase, etc). */
@@ -69,6 +73,8 @@ export interface CreateAppOptions {
 	availableTags?: string[];
 	/** Mount path for the service router. */
 	mount?: string;
+	/** Host hook invoked for every ticketing activity. */
+	onActivity?: OnActivity;
 }
 
 export interface App {
@@ -87,6 +93,7 @@ export async function createApp(opts: CreateAppOptions = {}): Promise<App> {
 		agentUserIds = [],
 		availableTags,
 		mount = "/api/servicedesk",
+		onActivity,
 	} = opts;
 
 	const inner = new Database(dbPath);
@@ -111,7 +118,7 @@ export async function createApp(opts: CreateAppOptions = {}): Promise<App> {
 			connection: db as unknown as ServiceConnection,
 			provider: "sqlite",
 		},
-		config: { auth, agentUserIds, availableTags },
+		config: { auth, agentUserIds, availableTags, onActivity },
 	});
 	const handler = service.createHandler({
 		basePath: mount,
