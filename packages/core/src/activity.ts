@@ -36,6 +36,7 @@ export type SpindeskActivity = ActivityMeta &
 		  }
 		| { type: "ticket-archived"; ticketId: string; ticket: Ticket }
 		| { type: "ticket-unarchived"; ticketId: string; ticket: Ticket }
+		| { type: "ticket-deleted"; ticketId: string }
 		| {
 				type: "comment-created";
 				ticketId: string;

@@ -722,6 +722,93 @@ describe("service-desk", () => {
 		).toBe(401);
 	});
 
+	test("management API key drives ticket CRUD on behalf of a user", async () => {
+		const KEY = "secret-key";
+		const f = await setup({ managementApiKey: KEY });
+		const mApp = f.app;
+		const mH = f.headers;
+		const keyed = (key = KEY) => new Headers({ authorization: `Bearer ${key}` });
+		const base = `${MOUNT}/management/users/${USER_ID}/tickets`;
+		const otherBase = `${MOUNT}/management/users/${OTHER_ID}/tickets`;
+
+		// missing/wrong key rejected
+		expect(
+			(await post(mApp, base, keyed("nope"), { subject: "s", description: "d" }))
+				.status,
+		).toBe(401);
+		expect((await call(mApp, base)).status).toBe(401);
+
+		// create a ticket owned by USER_ID
+		const created = await (
+			await post(mApp, base, keyed(), {
+				subject: "on behalf",
+				description: "d",
+				tags: ["billing"],
+			})
+		).json() as any;
+		expect(created.userId).toBe(USER_ID);
+		expect(created.tags).toEqual(["billing"]);
+
+		// the user sees it as their own ticket through the session API
+		const mine = await (
+			await call(mApp, `${MOUNT}/tickets`, mH[USER_ID])
+		).json() as any;
+		expect(mine.total).toBe(1);
+		expect(mine.tickets[0].id).toBe(created.id);
+
+		// a ticket for a different user, to prove the listing is scoped
+		const otherTicket = await (
+			await post(mApp, otherBase, keyed(), { subject: "other", description: "d" })
+		).json() as any;
+		const listed = await (await call(mApp, base, keyed())).json() as any;
+		expect(listed.total).toBe(1);
+		expect(listed.tickets[0].userId).toBe(USER_ID);
+
+		// get by id and by number; another user's ticket is 404 on this path
+		expect(
+			((await (await call(mApp, `${base}/${created.id}`, keyed())).json()) as any)
+				.id,
+		).toBe(created.id);
+		expect(
+			((await (
+				await call(mApp, `${base}/${created.number}`, keyed())
+			).json()) as any).id,
+		).toBe(created.id);
+		expect(
+			(await call(mApp, `${base}/${otherTicket.id}`, keyed())).status,
+		).toBe(404);
+
+		// update applies agent-only workflow fields
+		const updated = await (
+			await patch(mApp, `${base}/${created.id}`, keyed(), {
+				status: "pending",
+				assigneeId: AGENT_ID,
+			})
+		).json() as any;
+		expect(updated.status).toBe("pending");
+		expect(updated.assigneeId).toBe(AGENT_ID);
+
+		// delete removes the ticket
+		expect(
+			((await (await del(mApp, `${base}/${created.id}`, keyed())).json()) as any)
+				.ok,
+		).toBe(true);
+		expect((await call(mApp, `${base}/${created.id}`, keyed())).status).toBe(404);
+	});
+
+	test("management ticket API is disabled when no key is configured", async () => {
+		expect(
+			(
+				await post(
+					app,
+					`${MOUNT}/management/users/${USER_ID}/tickets`,
+					new Headers({ authorization: "Bearer anything" }),
+					{ subject: "s", description: "d" },
+				)
+			).status,
+		).toBe(401);
+	});
+
 	test("validation errors return 400", async () => {
 		expect(
 			(await post(app, `${MOUNT}/tickets`, H[USER_ID], { subject: "" }))

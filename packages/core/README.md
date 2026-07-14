@@ -107,6 +107,7 @@ const service = createSpindesk({
     auth, // your better-auth instance (or interface-compatible adapter)
     agentUserIds: ["..."], // users seeded with the "agent" role
     agentEmails: ["agent@example.com"], // or seed agents by email
+    managementApiKey: process.env.MANAGEMENT_API_KEY, // enables the management API
     availableTags: ["billing", "bug", "question"],
     maxAttachmentBytes: 5 * 1024 * 1024,
   },
@@ -140,6 +141,19 @@ All routes are relative to the mount path. Requests are authenticated via the co
 | `GET`    | `/tickets/:id/attachments/:attId` | Download an attachment.              |
 | `DELETE` | `/tickets/:id/attachments/:attId` | Delete an attachment.                |
 | `PATCH`  | `/users/:id/role`                 | Set a user's role (agents only).     |
+
+### Management API
+
+Management routes are authorized by the configured `managementApiKey` — sent as an `Authorization: Bearer <key>` token — rather than a better-auth session. When no key is configured, the entire management surface returns `401`. These endpoints let a trusted backend act on behalf of a user identified by `:userId` (created tickets are owned by that user; reads, updates, and deletes are scoped to that user's tickets). Unlike the session `PATCH /tickets/:id`, the management update applies every field, including the agent-only workflow fields (`status`, `assigneeId`).
+
+| Method   | Path                                       | Description                                  |
+| -------- | ------------------------------------------ | -------------------------------------------- |
+| `POST`   | `/management/agents`                       | Promote a user to agent by id or email.      |
+| `POST`   | `/management/users/:userId/tickets`        | Create a ticket owned by the user.           |
+| `GET`    | `/management/users/:userId/tickets`        | List the user's tickets (Lucene filter).     |
+| `GET`    | `/management/users/:userId/tickets/:id`    | Fetch one of the user's tickets.             |
+| `PATCH`  | `/management/users/:userId/tickets/:id`    | Update one of the user's tickets.            |
+| `DELETE` | `/management/users/:userId/tickets/:id`    | Permanently delete one of the user's tickets.|
 
 ## Type-safe client
 
