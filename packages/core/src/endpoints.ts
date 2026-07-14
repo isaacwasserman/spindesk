@@ -41,22 +41,41 @@ type CommentRow = DB["comments"];
  */
 const roleSchema = z.enum(["user", "agent"]);
 
-const ticketSchema = z.object({
-	id: z.string(),
-	number: z.number(),
-	userId: z.string(),
-	userName: z.string().nullable(),
-	subject: z.string(),
-	description: z.string(),
-	status: z.enum(TICKET_STATUS),
-	assigneeId: z.string().nullable(),
-	assigneeName: z.string().nullable(),
-	tags: z.array(z.string()),
-	metadata: z.record(z.string(), z.unknown()),
-	archivedAt: z.string().nullable(),
-	createdAt: z.string(),
-	updatedAt: z.string(),
-});
+/**
+ * Ticket `metadata` is opaque host-supplied key/value data. It defaults to an
+ * open record; a host can pin its shape with the `M` type argument on
+ * `createSpindesk`/`createSpindeskClient`, which flows through the schema
+ * factories below to the endpoint bodies, outputs, and the typed client.
+ */
+export type TicketMetadata = Record<string, unknown>;
+
+/**
+ * A metadata field whose static type is `M` on both input and output. The
+ * runtime schema is an open record — validation stays shape-agnostic; `M` is a
+ * compile-time view the caller vouches for.
+ */
+function metadataField<M extends TicketMetadata>() {
+	return z.record(z.string(), z.unknown()) as unknown as z.ZodType<M, M>;
+}
+
+function ticketSchemaFor<M extends TicketMetadata>() {
+	return z.object({
+		id: z.string(),
+		number: z.number(),
+		userId: z.string(),
+		userName: z.string().nullable(),
+		subject: z.string(),
+		description: z.string(),
+		status: z.enum(TICKET_STATUS),
+		assigneeId: z.string().nullable(),
+		assigneeName: z.string().nullable(),
+		tags: z.array(z.string()),
+		metadata: metadataField<M>(),
+		archivedAt: z.string().nullable(),
+		createdAt: z.string(),
+		updatedAt: z.string(),
+	});
+}
 
 const commentSchema = z.object({
 	id: z.string(),
@@ -84,12 +103,6 @@ const meSchema = z.object({
 	role: roleSchema,
 	name: z.string().nullable(),
 });
-const ticketPageSchema = z.object({
-	tickets: z.array(ticketSchema),
-	total: z.number(),
-	limit: z.number(),
-	offset: z.number(),
-});
 const commentListSchema = z.object({
 	comments: z.array(commentSchema),
 	total: z.number(),
@@ -102,7 +115,9 @@ const roleUpdateSchema = z.object({ id: z.string(), role: roleSchema });
 const tagsSchema = z.object({ tags: z.array(z.string()) });
 const okSchema = z.object({ ok: z.boolean() });
 
-export type Ticket = z.infer<typeof ticketSchema>;
+export type Ticket<M extends TicketMetadata = TicketMetadata> = z.infer<
+	ReturnType<typeof ticketSchemaFor<M>>
+>;
 export type Comment = z.infer<typeof commentSchema>;
 export type Attachment = z.infer<typeof attachmentSchema>;
 
@@ -254,10 +269,10 @@ function validateTags(svc: SvcCtx, tags: string[]): void {
 }
 
 /** Attach live owner/assignee display names (from better-auth) + tags array to tickets. */
-async function enrichTickets(
+async function enrichTickets<M extends TicketMetadata>(
 	svc: SvcCtx,
 	tickets: TicketRow[],
-): Promise<Ticket[]> {
+): Promise<Ticket<M>[]> {
 	const names = await resolveUserNames(
 		authOf(svc),
 		tickets.flatMap((t) => [t.userId, t.assigneeId]),
@@ -266,15 +281,18 @@ async function enrichTickets(
 		...t,
 		status: t.status as Ticket["status"],
 		tags: parseTags(t.tags),
-		metadata: parseMetadata(t.metadata),
+		metadata: parseMetadata(t.metadata) as M,
 		userName: names.get(t.userId)?.name ?? null,
 		assigneeName: t.assigneeId ? (names.get(t.assigneeId)?.name ?? null) : null,
 	}));
 }
 
-async function enrichTicket(svc: SvcCtx, ticket: TicketRow): Promise<Ticket> {
-	const [enriched] = await enrichTickets(svc, [ticket]);
-	return enriched as Ticket;
+async function enrichTicket<M extends TicketMetadata>(
+	svc: SvcCtx,
+	ticket: TicketRow,
+): Promise<Ticket<M>> {
+	const [enriched] = await enrichTickets<M>(svc, [ticket]);
+	return enriched as Ticket<M>;
 }
 
 /** Attach live author display names (from better-auth) to comments. */
@@ -327,9 +345,16 @@ function headersOf(ctx: unknown): Headers {
  * context — done in the handler (not `use`) because futonic's baked middleware
  * runs last, so `serviceCtx` is only guaranteed present once the handler runs.
  */
-export function createSpindeskEndpoints(
-	defineEndpoint: DefineServiceDeskEndpoint,
-) {
+export function createSpindeskEndpoints<
+	M extends TicketMetadata = TicketMetadata,
+>(defineEndpoint: DefineServiceDeskEndpoint) {
+	const ticketSchema = ticketSchemaFor<M>();
+	const ticketPageSchema = z.object({
+		tickets: z.array(ticketSchema),
+		total: z.number(),
+		limit: z.number(),
+		offset: z.number(),
+	});
 	// biome-ignore lint/suspicious/noExplicitAny: passthrough over defineEndpoint's generic signature
 	const createEndpoint = ((path: any, options: any, handler: any) =>
 		defineEndpoint(path, options, async (ctx: unknown) => {
@@ -364,7 +389,7 @@ export function createSpindeskEndpoints(
 				subject: z.string().min(1),
 				description: z.string().min(1),
 				tags: z.array(z.string()).optional(),
-				metadata: z.record(z.string(), z.unknown()).optional(),
+				metadata: metadataField<M>().optional(),
 			}),
 			output: ticketSchema,
 		},
@@ -400,7 +425,7 @@ export function createSpindeskEndpoints(
 				return t;
 			});
 			svc.logger.info(`Ticket created: ${ticket.id} (#${ticket.number})`);
-			return await enrichTicket(svc, ticket);
+			return await enrichTicket<M>(svc, ticket);
 		},
 	);
 
@@ -468,7 +493,7 @@ export function createSpindeskEndpoints(
 			const countRow = await countQuery.executeTakeFirst();
 			const total = Number(countRow?.count ?? 0);
 			return {
-				tickets: await enrichTickets(svc, tickets),
+				tickets: await enrichTickets<M>(svc, tickets),
 				total,
 				limit,
 				offset,
@@ -483,7 +508,7 @@ export function createSpindeskEndpoints(
 			const context = (ctx as unknown as Ctx).context;
 			const { id } = ctx.params as { id: string };
 			const ticket = await getAccessibleTicket(context, id);
-			return await enrichTicket(context.serviceCtx, ticket);
+			return await enrichTicket<M>(context.serviceCtx, ticket);
 		},
 	);
 
@@ -496,7 +521,7 @@ export function createSpindeskEndpoints(
 				subject: z.string().min(1).optional(),
 				description: z.string().min(1).optional(),
 				tags: z.array(z.string()).optional(),
-				metadata: z.record(z.string(), z.unknown()).optional(),
+				metadata: metadataField<M>().optional(),
 				archived: z.boolean().optional(),
 				// Agent-only workflow fields.
 				status: z.enum(TICKET_STATUS).optional(),
@@ -561,7 +586,7 @@ export function createSpindeskEndpoints(
 				data.assigneeId = ctx.body.assigneeId;
 			}
 			if (Object.keys(data).length === 0) {
-				return await enrichTicket(svc, ticket);
+				return await enrichTicket<M>(svc, ticket);
 			}
 
 			data.updatedAt = new Date().toISOString();
@@ -575,7 +600,7 @@ export function createSpindeskEndpoints(
 				.selectAll()
 				.where("id", "=", ticket.id)
 				.executeTakeFirstOrThrow();
-			return await enrichTicket(svc, updated);
+			return await enrichTicket<M>(svc, updated);
 		},
 	);
 

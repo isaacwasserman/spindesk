@@ -12,7 +12,7 @@ const BASE = `${window.location.origin}/api/servicedesk`;
  * Type-safe service-desk client. `throw: true` means each `client("@post/…")`
  * call returns the response payload directly and throws on error.
  */
-export const client = createSpindeskClient({
+export const client = createSpindeskClient()({
 	baseURL: BASE,
 	credentials: "include",
 	throw: true,

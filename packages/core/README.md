@@ -1,8 +1,8 @@
 # @spindesk/core
 
-An embeddable service desk API built on [futonic](https://github.com/isaacwasserman/futonic).
+An embeddable service desk API built on [futonic](https://github.com/isaacwasserman/futonic). Host applications create the required tables in their own database and mount Spindesk as a route handler in any web-standard JavaScript app.
 
-Host applications create the required tables in their own database and mount Spindesk as a route handler in any web-standard JavaScript app.
+This is the usage reference. For the monorepo layout and the reference demo host, see the [repository README](https://github.com/isaacwasserman/spindesk).
 
 ## Features
 
@@ -10,16 +10,15 @@ Host applications create the required tables in their own database and mount Spi
 - Uses the database that your app already has.
 - Connects to the authentication that your app already uses (with [better-auth](https://better-auth.com) as a first-class citizen).
 - Bring your own UI; we provide the logic, and you do whatever you want with it.
+- Attach arbitrary key/value metadata to tickets — and optionally type its shape end-to-end with a type argument (see [Typed ticket metadata](#typed-ticket-metadata)).
 
-## Usage
-
-### Installation
+## Install
 
 ```sh
 bun add @spindesk/core
 ```
 
-### Database
+## Database
 
 Spindesk uses the database your application already has. That means you own the tables and the DDL to create them. Spindesk ships a dialect-agnostic schema whose abstract column types map to different physical types per dialect:
 
@@ -51,6 +50,7 @@ CREATE TABLE IF NOT EXISTS spindesk_tickets (
   status TEXT NOT NULL,
   assignee_id TEXT,
   tags TEXT, -- JSON array of tags, e.g. ["billing","urgent"]
+  metadata TEXT, -- JSON object of arbitrary key/value metadata
   archived_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS spindesk_comments (
 );
 ```
 
-#### Drizzle
+### Drizzle
 
 If your host uses Drizzle, `@spindesk/core/drizzle` builds the tables against your own drizzle-orm version — pass your dialect module and let your migration tooling emit the DDL:
 
@@ -92,7 +92,7 @@ import { generateSpindeskSchema } from "@spindesk/core/drizzle";
 export const spindeskTables = generateSpindeskSchema("pg", pg);
 ```
 
-## Instantiation and Mounting
+## Quickstart
 
 ```ts
 import { db } from "your-database";
@@ -119,7 +119,7 @@ const route = (request: Request) => handler.handle(request);
 
 `createHandler` also exposes an OpenAPI reference at `/reference` by default; pass `{ openApi: false }` to disable it.
 
-See [`ServiceDeskConfig`](./src/types.ts) for the full configuration surface.
+See [`ServiceDeskConfig`](./src/types.ts) for the full configuration surface. `createSpindesk` also takes an optional metadata type argument — `createSpindesk<MyMeta>({ … })` — covered in [Typed ticket metadata](#typed-ticket-metadata).
 
 ## API
 
@@ -141,18 +141,48 @@ All routes are relative to the mount path. Requests are authenticated via the co
 | `DELETE` | `/tickets/:id/attachments/:attId` | Delete an attachment.                |
 | `PATCH`  | `/users/:id/role`                 | Set a user's role (agents only).     |
 
-### Type-safe client
+## Type-safe client
 
-`@spindesk/core/client` wraps better-call's typed client with Spindesk's router types:
+`@spindesk/core/client` wraps better-call's typed client with Spindesk's router types. The client is built in two steps — an empty first call reserves the optional metadata type argument (see below); the second takes the options:
 
 ```ts
 import { createSpindeskClient } from "@spindesk/core/client";
 
-const client = createSpindeskClient({
+const client = createSpindeskClient()({
   baseURL: "/api/servicedesk",
   credentials: "include",
 });
 ```
+
+## Typed ticket metadata
+
+Every ticket carries a free-form `metadata` object — opaque key/value data the host supplies (e.g. `{ source: "email", priority: 3 }`). It round-trips through the create and update bodies and every ticket response, defaults to `{}` when absent, and is validated only as an object (no vocabulary enforcement).
+
+If your host uses a consistent shape, pin it with a type argument and it flows end-to-end — request bodies, responses, and the typed client — with no cast. Pass the **same** type to `createSpindesk` (server) and `createSpindeskClient` (client):
+
+```ts
+interface TicketMeta {
+  source: "email" | "web" | "chat";
+  priority: number;
+}
+
+// server — bodies, responses, and handlers see `TicketMeta`
+const service = createSpindesk<TicketMeta>({ database, config });
+
+// client — same shape on requests and responses
+const client = createSpindeskClient<TicketMeta>()({
+  baseURL: "/api/servicedesk",
+  credentials: "include",
+});
+
+const { data } = await client("/tickets/:id", { params: { id } });
+data?.metadata.priority; // number
+await client("@post/tickets", {
+  body: { subject: "s", description: "d", metadata: { source: "web", priority: 1 } },
+});
+```
+
+Both default to an open `Record<string, unknown>`, so `createSpindesk({ … })` and `createSpindeskClient()({ … })` stay untyped. The type is a compile-time view you vouch for — Spindesk still stores and returns whatever metadata is sent.
 
 ## License
 

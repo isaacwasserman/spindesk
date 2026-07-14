@@ -1,21 +1,26 @@
 # spindesk
 
-An embeddable service desk API you mount inside your own app — no external services, your database, your auth, your UI.
+**An embeddable service desk API you mount inside your own app — no external services, your database, your auth, your UI.**
 
-Spindesk gives you the ticketing logic (tickets, comments, attachments, roles, tagging) as a web-standard request handler. You own the tables and the front end.
+> Looking for how to install, mount, or call it? The usage reference lives in the package README: **[`packages/core/README.md`](./packages/core/README.md)**.
+
+Spindesk gives you the ticketing logic — tickets, comments, attachments, roles, tagging, and typed per-ticket metadata — as a web-standard request handler. You own the tables and the front end. It's built on [futonic](https://github.com/isaacwasserman/futonic), which embeds services into a host app instead of deploying them alongside it.
+
+- **No external services** — runs in-process inside your app; no extra containers or network hops.
+- **Your database** — Postgres, MySQL, or SQLite; you own the tables and DDL.
+- **Your auth** — plugs into the auth you already run, with [better-auth](https://better-auth.com) as a first-class citizen.
+- **Your UI** — Spindesk is the logic plus a fully typed client; the front end is yours.
 
 ## Packages
 
-| Package                                | Description                                                 |
-| -------------------------------------- | ----------------------------------------------------------- |
-| [`@spindesk/core`](./packages/core)    | The embeddable service desk API, built on [futonic](https://github.com/isaacwasserman/futonic). |
-| [`apps/demo`](./apps/demo)             | A reference host: better-auth + bun:sqlite + a React UI.    |
+This is a [Bun](https://bun.sh) workspace monorepo.
 
-See [`packages/core/README.md`](./packages/core/README.md) for installation, the database schema, mounting, and the API surface.
+| Package | Description |
+| --- | --- |
+| [`@spindesk/core`](./packages/core) | The embeddable service desk API. Published to npm; its [README](./packages/core/README.md) covers install, the database schema, mounting, the API surface, the typed client, and typed metadata. |
+| [`apps/demo`](./apps/demo) | A reference host wiring it all together: better-auth + bun:sqlite + a React UI. |
 
 ## Development
-
-This is a [Bun](https://bun.sh) workspace monorepo.
 
 ```sh
 bun install       # install workspace deps
@@ -27,7 +32,7 @@ bun run lint      # biome check
 bun run format    # biome format
 ```
 
-Releases are managed with [changesets](https://github.com/changesets/changesets).
+Releases are managed with [changesets](https://github.com/changesets/changesets): add one with `bunx changeset` describing any user-facing change.
 
 ## License
 
