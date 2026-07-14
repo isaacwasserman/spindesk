@@ -1,3 +1,4 @@
+import type { StandardSchemaV1 } from "@standard-schema/spec";
 import {
 	type HandlerOptions,
 	type SecurityScheme,
@@ -35,6 +36,7 @@ const configSchema = z.object({
 	agentEmails: z.array(z.string()).optional(),
 	managementApiKey: z.string().optional(),
 	availableTags: z.array(z.string()).optional(),
+	metadataSchema: z.custom<StandardSchemaV1>().optional(),
 	maxAttachmentBytes: z.number().optional(),
 	onActivity: z
 		.custom<OnActivity>((value) => value == null || typeof value === "function")
@@ -107,14 +109,31 @@ export type SpindeskRouter<M extends TicketMetadata = TicketMetadata> =
 	SpindeskEndpoints<M>;
 
 /**
- * Build the service. Pass a metadata type argument — `createSpindesk<MyMeta>(…)`
- * — to type ticket `metadata` end-to-end: the create/update request bodies, the
- * ticket responses, and the {@link createSpindeskClient} results all surface
- * `MyMeta`. Defaults to an open record, so plain `createSpindesk(…)` is
- * unchanged. Validation stays shape-agnostic; the type is a view you vouch for.
+ * A Standard Schema for ticket `metadata`, typed to the shape `M`. Pass one as
+ * `config.metadataSchema` to validate metadata at runtime and infer its type.
+ */
+export type TicketMetadataSchema<M extends TicketMetadata = TicketMetadata> =
+	StandardSchemaV1<unknown, M>;
+
+/**
+ * Build the service, typing ticket `metadata` end-to-end — the create/update
+ * request bodies, the ticket responses, and the {@link createSpindeskClient}
+ * results all surface the metadata type. There are two ways to supply it:
+ *
+ * - Pass a `config.metadataSchema` (any Standard Schema). `M` is inferred from
+ *   it — no type argument needed — and metadata is validated against it at
+ *   runtime (400 on failure).
+ * - Or pass a type argument — `createSpindesk<MyMeta>(…)` — for compile-time
+ *   typing only, with no runtime validation.
+ *
+ * Both default to an open record, so plain `createSpindesk(…)` is unchanged.
  */
 export function createSpindesk<M extends TicketMetadata = TicketMetadata>(
-	options: SpindeskArgs,
+	options: Omit<SpindeskArgs, "config"> & {
+		config: Omit<SpindeskArgs["config"], "metadataSchema"> & {
+			metadataSchema?: TicketMetadataSchema<M>;
+		};
+	},
 ) {
 	const service = spindeskConstructor<SpindeskEndpoints<M>>(options);
 	return {

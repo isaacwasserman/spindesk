@@ -156,9 +156,30 @@ const client = createSpindeskClient()({
 
 ## Typed ticket metadata
 
-Every ticket carries a free-form `metadata` object — opaque key/value data the host supplies (e.g. `{ source: "email", priority: 3 }`). It round-trips through the create and update bodies and every ticket response, defaults to `{}` when absent, and is validated only as an object (no vocabulary enforcement).
+Every ticket carries a free-form `metadata` object — opaque key/value data the host supplies (e.g. `{ source: "email", priority: 3 }`). It round-trips through the create and update bodies and every ticket response, and defaults to `{}` when absent. By default it's typed as an open `Record<string, unknown>` with no runtime validation. If your host uses a consistent shape, there are two ways to pin it.
 
-If your host uses a consistent shape, pin it with a type argument and it flows end-to-end — request bodies, responses, and the typed client — with no cast. Pass the **same** type to `createSpindesk` (server) and `createSpindeskClient` (client):
+### With a config schema (typed **and** validated)
+
+Pass any [Standard Schema](https://standardschema.dev) (Zod, Valibot, ArkType, …) as `config.metadataSchema`. Spindesk **infers** the metadata type from it — no type argument — and validates `metadata` on create/update at runtime, rejecting bad payloads with `400`:
+
+```ts
+import { z } from "zod";
+
+const metadataSchema = z.object({
+  source: z.enum(["email", "web", "chat"]),
+  priority: z.number(),
+});
+
+// `metadata` is typed as { source: …; priority: number } on the server,
+// and invalid metadata is rejected at runtime.
+const service = createSpindesk({ database, config: { auth, metadataSchema } });
+```
+
+Metadata stays optional: omitting it on create still yields `{}`. Only provided metadata is validated, so make schema fields optional if a ticket may legitimately lack them.
+
+### With a type argument (types only)
+
+If you only want compile-time types and no runtime validation, pass a type argument instead — no schema value required:
 
 ```ts
 interface TicketMeta {
@@ -166,10 +187,14 @@ interface TicketMeta {
   priority: number;
 }
 
-// server — bodies, responses, and handlers see `TicketMeta`
 const service = createSpindesk<TicketMeta>({ database, config });
+```
 
-// client — same shape on requests and responses
+### On the client
+
+The client is built separately from the server and can't see its config, so pin the metadata type on it explicitly with the **same** shape (curried — see [Type-safe client](#type-safe-client)):
+
+```ts
 const client = createSpindeskClient<TicketMeta>()({
   baseURL: "/api/servicedesk",
   credentials: "include",
@@ -182,7 +207,7 @@ await client("@post/tickets", {
 });
 ```
 
-Both default to an open `Record<string, unknown>`, so `createSpindesk({ … })` and `createSpindeskClient()({ … })` stay untyped. The type is a compile-time view you vouch for — Spindesk still stores and returns whatever metadata is sent.
+Both server forms and the client default to an open `Record<string, unknown>`, so untyped usage is unchanged. The type argument is a compile-time view you vouch for; only `config.metadataSchema` adds runtime enforcement.
 
 ## License
 

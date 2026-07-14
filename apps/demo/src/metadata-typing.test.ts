@@ -4,8 +4,9 @@
  * is also a valid test. Runtime metadata behavior is covered in e2e.test.ts.
  */
 import { expect, test } from "bun:test";
+import { createSpindesk } from "@spindesk/core";
+import type { Ticket, TicketMetadataSchema } from "@spindesk/core";
 import { createSpindeskClient } from "@spindesk/core/client";
-import type { Ticket } from "@spindesk/core";
 
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B
 	? 1
@@ -31,7 +32,25 @@ async function untypedReads() {
 	return client("/tickets/:id", { params: { id: "1" } });
 }
 
+// A config `metadataSchema` infers the metadata type on the server — no type
+// argument. (Body never runs; it only needs to type-check.)
+async function inferredFromSchema() {
+	const metadataSchema: TicketMetadataSchema<Meta> = {
+		"~standard": {
+			version: 1,
+			vendor: "t",
+			validate: (v) => ({ value: v as Meta }),
+		},
+	};
+	const svc = createSpindesk({
+		database: { connection: {} as never, provider: "sqlite" },
+		config: { auth: {} as never, metadataSchema },
+	});
+	return svc.endpoints.getTicket({ params: { id: "1" } });
+}
+
 type TypedTicket = Awaited<ReturnType<typeof typedReads>>["ticket"];
+type SchemaInferredTicket = Awaited<ReturnType<typeof inferredFromSchema>>;
 type TypedPageItem = Awaited<
 	ReturnType<typeof typedReads>
 >["page"]["tickets"][number];
@@ -39,6 +58,7 @@ type TypedCreated = Awaited<ReturnType<typeof typedReads>>["created"];
 type UntypedTicket = Awaited<ReturnType<typeof untypedReads>>;
 
 type _exportedTicket = Expect<Equal<Ticket<Meta>["metadata"], Meta>>;
+type _schemaInferred = Expect<Equal<SchemaInferredTicket["metadata"], Meta>>;
 type _clientTicket = Expect<Equal<TypedTicket["metadata"], Meta>>;
 type _clientList = Expect<Equal<TypedPageItem["metadata"], Meta>>;
 type _clientCreated = Expect<Equal<TypedCreated["metadata"], Meta>>;

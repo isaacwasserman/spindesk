@@ -34,6 +34,7 @@
     "format": "biome format --write src/"
   },
   "dependencies": {
+    "@standard-schema/spec": "1.1.0",
     "better-call": "^2.0.5",
     "futonic": "0.1.1-canary.063ab81",
     "kysely": "^0.29.3",
