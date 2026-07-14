@@ -55,6 +55,12 @@ export type ServiceDeskConfig = {
 	agentUserIds?: string[];
 	/** better-auth user emails seeded with the "agent" role on first sight. */
 	agentEmails?: string[];
+	/**
+	 * Shared secret that authorizes management-only endpoints (e.g. promoting a
+	 * user to agent by id or email) without a better-auth session. Callers pass
+	 * it in the `x-management-api-key` header.
+	 */
+	managementApiKey?: string;
 	/** Allowed tag vocabulary; ticket tags are validated against this. */
 	availableTags?: string[];
 	/** Max attachment size in bytes (default 5 MiB). */

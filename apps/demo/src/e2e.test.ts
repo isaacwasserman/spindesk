@@ -580,6 +580,55 @@ describe("service-desk", () => {
 		expect(meOther.role).toBe("agent");
 	});
 
+	test("management API key promotes users to agent by id or email", async () => {
+		const KEY = "secret-key";
+		const f = await setup({ managementApiKey: KEY });
+		const mApp = f.app;
+		const mH = f.headers;
+		const keyed = (body: unknown, key?: string) =>
+			post(
+				mApp,
+				`${MOUNT}/management/agents`,
+				new Headers(key ? { "x-management-api-key": key } : {}),
+				body,
+			);
+
+		// missing/wrong key rejected
+		expect((await keyed({ userId: OTHER_ID })).status).toBe(401);
+		expect((await keyed({ userId: OTHER_ID }, "nope")).status).toBe(401);
+
+		// promote by id
+		const byId = await (await keyed({ userId: OTHER_ID }, KEY)).json() as any;
+		expect(byId).toEqual({ id: OTHER_ID, role: "agent" });
+		expect(
+			((await (await call(mApp, `${MOUNT}/me`, mH[OTHER_ID])).json()) as any)
+				.role,
+		).toBe("agent");
+
+		// promote by email
+		const byEmail = await (
+			await keyed({ email: "user@example.com" }, KEY)
+		).json() as any;
+		expect(byEmail).toEqual({ id: USER_ID, role: "agent" });
+
+		// unknown email → 404, missing id+email → 400
+		expect((await keyed({ email: "nobody@example.com" }, KEY)).status).toBe(404);
+		expect((await keyed({}, KEY)).status).toBe(400);
+	});
+
+	test("management API is disabled when no key is configured", async () => {
+		expect(
+			(
+				await post(
+					app,
+					`${MOUNT}/management/agents`,
+					new Headers({ "x-management-api-key": "anything" }),
+					{ userId: OTHER_ID },
+				)
+			).status,
+		).toBe(401);
+	});
+
 	test("validation errors return 400", async () => {
 		expect(
 			(await post(app, `${MOUNT}/tickets`, H[USER_ID], { subject: "" }))

@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { APIError } from "better-call";
 import type {
 	Role,
@@ -5,6 +6,9 @@ import type {
 	ServiceDeskIdentity,
 	SvcCtx,
 } from "./types.js";
+
+/** Header carrying the management API key on management-only endpoints. */
+export const MANAGEMENT_KEY_HEADER = "x-management-api-key";
 
 /**
  * Resolves the current service-desk identity from a service context and the
@@ -63,5 +67,29 @@ export async function resolveIdentity(
 export function requireAgent(identity: ServiceDeskIdentity): void {
 	if (identity.role !== "agent") {
 		throw new APIError("FORBIDDEN", { message: "Agent role required" });
+	}
+}
+
+function keysMatch(provided: string, expected: string): boolean {
+	const a = Buffer.from(provided);
+	const b = Buffer.from(expected);
+	return a.length === b.length && timingSafeEqual(a, b);
+}
+
+/**
+ * Throws 401 unless the request carries the configured management API key in the
+ * `x-management-api-key` header. When no key is configured, all callers are
+ * rejected (the management surface is disabled).
+ */
+export function requireManagementKey(
+	config: ServiceDeskConfig,
+	headers: Headers,
+): void {
+	const expected = config.managementApiKey;
+	const provided = headers.get(MANAGEMENT_KEY_HEADER);
+	if (!expected || !provided || !keysMatch(provided, expected)) {
+		throw new APIError("UNAUTHORIZED", {
+			message: "Invalid management API key",
+		});
 	}
 }

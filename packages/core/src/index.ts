@@ -27,6 +27,7 @@ const configSchema = z.object({
 	}),
 	agentUserIds: z.array(z.string()).optional(),
 	agentEmails: z.array(z.string()).optional(),
+	managementApiKey: z.string().optional(),
 	availableTags: z.array(z.string()).optional(),
 	maxAttachmentBytes: z.number().optional(),
 	onActivity: z

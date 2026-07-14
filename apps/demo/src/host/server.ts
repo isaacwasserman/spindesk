@@ -69,6 +69,8 @@ export interface CreateAppOptions {
 	baseURL?: string;
 	/** better-auth user ids to seed with the "agent" role. */
 	agentUserIds?: string[];
+	/** Shared secret authorizing the management API (agent promotion). */
+	managementApiKey?: string;
 	/** Allowed tag vocabulary passed to the service. */
 	availableTags?: string[];
 	/** Mount path for the service router. */
@@ -91,6 +93,7 @@ export async function createApp(opts: CreateAppOptions = {}): Promise<App> {
 		dbPath = ":memory:",
 		baseURL = "http://localhost:3000",
 		agentUserIds = [],
+		managementApiKey,
 		availableTags,
 		mount = "/api/servicedesk",
 		onActivity,
@@ -118,7 +121,7 @@ export async function createApp(opts: CreateAppOptions = {}): Promise<App> {
 			connection: db as unknown as ServiceConnection,
 			provider: "sqlite",
 		},
-		config: { auth, agentUserIds, availableTags, onActivity },
+		config: { auth, agentUserIds, managementApiKey, availableTags, onActivity },
 	});
 	const handler = service.createHandler({
 		basePath: mount,

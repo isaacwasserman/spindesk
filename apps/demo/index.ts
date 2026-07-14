@@ -16,6 +16,7 @@ const app = await createApp({
 		.split(",")
 		.map((s) => s.trim())
 		.filter(Boolean),
+	managementApiKey: process.env.MANAGEMENT_API_KEY,
 	availableTags: (process.env.AVAILABLE_TAGS ?? "billing,bug,feature,urgent,question")
 		.split(",")
 		.map((s) => s.trim())
