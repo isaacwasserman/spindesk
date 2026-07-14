@@ -175,7 +175,7 @@ const metadataSchema = z.object({
 const service = createSpindesk({ database, config: { auth, metadataSchema } });
 ```
 
-Metadata stays optional: omitting it on create still yields `{}`. Only provided metadata is validated, so make schema fields optional if a ticket may legitimately lack them.
+A configured schema is treated as a guarantee, so metadata is validated on create and **required** — creating a ticket without it is a `400`, unless the schema itself accepts an empty value (`{}`, `null`, or `undefined`). Make your fields optional (or otherwise accept `{}`) if tickets may legitimately lack metadata. Updates are patches: `metadata` is validated only when included.
 
 ### With a type argument (types only)
 

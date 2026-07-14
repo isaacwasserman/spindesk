@@ -492,13 +492,45 @@ describe("service-desk", () => {
 		);
 		expect(badUpdate.status).toBe(400);
 
-		// Metadata stays optional: omitting it is still allowed.
-		const noMeta = await post(sApp, `${MOUNT}/tickets`, sH[USER_ID], {
+		// A configured schema is a guarantee: this one rejects empty metadata, so
+		// creating a ticket without metadata is a 400.
+		const missing = await post(sApp, `${MOUNT}/tickets`, sH[USER_ID], {
+			subject: "s",
+			description: "d",
+		});
+		expect(missing.status).toBe(400);
+	});
+
+	test("a metadataSchema that accepts empty keeps metadata optional", async () => {
+		// Accepts `{}`/absence, so metadata is not required on create.
+		const metadataSchema: TicketMetadataSchema<{ note?: string }> = {
+			"~standard": {
+				version: 1,
+				vendor: "spindesk-test",
+				validate: (value) => {
+					const v = (value ?? {}) as Record<string, unknown>;
+					if (v.note !== undefined && typeof v.note !== "string") {
+						return { issues: [{ message: "note must be a string" }] };
+					}
+					return { value: v as { note?: string } };
+				},
+			},
+		};
+		const f = await setup({ metadataSchema });
+
+		const noMeta = await post(f.app, `${MOUNT}/tickets`, f.headers[USER_ID], {
 			subject: "s",
 			description: "d",
 		});
 		expect(noMeta.ok).toBe(true);
 		expect(((await noMeta.json()) as any).metadata).toEqual({});
+
+		const bad = await post(f.app, `${MOUNT}/tickets`, f.headers[USER_ID], {
+			subject: "s",
+			description: "d",
+			metadata: { note: 123 },
+		});
+		expect(bad.status).toBe(400);
 	});
 
 	test("Lucene filters: status, tag, AND/OR/NOT", async () => {

@@ -315,6 +315,20 @@ async function validateMetadata(svc: SvcCtx, metadata: unknown): Promise<void> {
 		});
 	}
 }
+/**
+ * A configured schema is a guarantee, so a ticket must be created with metadata
+ * that satisfies it. Metadata may be omitted only when the schema accepts an
+ * empty value (`{}`, `null`, or `undefined`); otherwise creation is a 400.
+ */
+async function requireMetadataUnlessEmptyAllowed(svc: SvcCtx): Promise<void> {
+	const schema = configOf(svc).metadataSchema;
+	if (!schema) return;
+	for (const empty of [undefined, null, {}]) {
+		const result = await schema["~standard"].validate(empty);
+		if (!result.issues) return;
+	}
+	throw new APIError("BAD_REQUEST", { message: "Metadata is required" });
+}
 
 /** Attach live owner/assignee display names (from better-auth) + tags array to tickets. */
 async function enrichTickets<M extends TicketMetadata>(
@@ -466,6 +480,8 @@ export function createSpindeskEndpoints<
 			validateTags(svc, tags);
 			if (ctx.body.metadata !== undefined) {
 				await validateMetadata(svc, ctx.body.metadata);
+			} else {
+				await requireMetadataUnlessEmptyAllowed(svc);
 			}
 			const metadata = ctx.body.metadata ?? {};
 			const now = new Date().toISOString();
