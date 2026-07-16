@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { IMPERSONATION_HEADER, type TicketMetadataSchema } from "@spindesk/core";
 import { type App, type CreateAppOptions, createApp } from "./host/server";
 
-// Fixed ids so we can seed agentUserIds before the users exist.
+// Fixed ids so we can seed the agent predicate before the users exist.
 const AGENT_ID = "agent-1";
 const USER_ID = "user-1";
 const OTHER_ID = "user-2";
@@ -24,7 +24,7 @@ const TAGS = ["billing", "bug", "urgent"];
 
 async function setup(opts: Partial<CreateAppOptions> = {}): Promise<Fixture> {
 	const app = await createApp({
-		agentUserIds: [AGENT_ID],
+		userIsAgent: (user) => user.id === AGENT_ID,
 		availableTags: TAGS,
 		...opts,
 	});
@@ -107,6 +107,22 @@ describe("service-desk", () => {
 			role: "user",
 			name: "user@example.com",
 		});
+	});
+
+	test("userIsAgent predicate seeds by email and may be async", async () => {
+		const f = await setup({
+			userIsAgent: async (user) =>
+				user.email === "user@example.com",
+		});
+		const seeded = await (
+			await call(f.app, `${MOUNT}/me`, f.headers[USER_ID])
+		).json() as any;
+		expect(seeded.role).toBe("agent");
+
+		const other = await (
+			await call(f.app, `${MOUNT}/me`, f.headers[OTHER_ID])
+		).json() as any;
+		expect(other.role).toBe("user");
 	});
 
 	test("user creates a ticket and sees only their own", async () => {

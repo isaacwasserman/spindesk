@@ -9,7 +9,7 @@ import { z } from "zod";
 import type { OnActivity } from "./activity.js";
 import { type TicketMetadata, createSpindeskEndpoints } from "./endpoints.js";
 import { serviceDeskSchema } from "./schema.js";
-import type { AuthLike } from "./types.js";
+import type { AuthLike, ServiceDeskConfig } from "./types.js";
 
 export { IMPERSONATION_HEADER } from "./auth-middleware.js";
 export type { Role } from "./types.js";
@@ -33,8 +33,11 @@ const configSchema = z.object({
 	auth: z.custom<AuthLike>((value) => value != null, {
 		message: "auth is required",
 	}),
-	agentUserIds: z.array(z.string()).optional(),
-	agentEmails: z.array(z.string()).optional(),
+	userIsAgent: z
+		.custom<ServiceDeskConfig["userIsAgent"]>(
+			(value) => value == null || typeof value === "function",
+		)
+		.optional(),
 	managementApiKey: z.string().optional(),
 	availableTags: z.array(z.string()).optional(),
 	metadataSchema: z.custom<StandardSchemaV1>().optional(),

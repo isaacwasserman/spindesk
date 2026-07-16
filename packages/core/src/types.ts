@@ -52,10 +52,15 @@ export interface AuthLike {
 export type ServiceDeskConfig = {
 	/** better-auth instance used to authenticate incoming requests. */
 	auth: AuthLike;
-	/** better-auth user ids seeded with the "agent" role on first sight. */
-	agentUserIds?: string[];
-	/** better-auth user emails seeded with the "agent" role on first sight. */
-	agentEmails?: string[];
+	/**
+	 * Predicate seeding the "agent" role on first sight. Called with the user's
+	 * id and email; `email` is null when unavailable (e.g. impersonation).
+	 * Returns true to seed the user as an agent.
+	 */
+	userIsAgent?: (user: {
+		id: string;
+		email: string | null;
+	}) => boolean | Promise<boolean>;
 	/**
 	 * Shared secret that authorizes management-only endpoints (e.g. promoting a
 	 * user to agent by id or email) without a better-auth session. Callers pass

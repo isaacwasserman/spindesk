@@ -50,8 +50,8 @@ export async function resolveIdentity(
 /**
  * Resolve the identity for a known better-auth user id, lazily provisioning the
  * sidecar `users` row and physically promoting a configured agent whose row
- * predates the config. `email` enables the `agentEmails` seed; pass null when
- * it's unavailable (e.g. impersonation, which only has an id).
+ * predates the config. `email` is passed to the `userIsAgent` predicate; pass
+ * null when it's unavailable (e.g. impersonation, which only has an id).
  */
 async function provisionIdentity(
 	svc: SvcCtx,
@@ -59,9 +59,9 @@ async function provisionIdentity(
 	userId: string,
 	email: string | null,
 ): Promise<ServiceDeskIdentity> {
-	const isConfiguredAgent =
-		(config.agentUserIds?.includes(userId) ?? false) ||
-		(email !== null && (config.agentEmails?.includes(email) ?? false));
+	const isConfiguredAgent = config.userIsAgent
+		? await config.userIsAgent({ id: userId, email })
+		: false;
 
 	const row = await svc.db
 		.selectFrom("users")
