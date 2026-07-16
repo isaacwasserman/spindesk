@@ -105,8 +105,7 @@ const service = createSpindesk({
   },
   config: {
     auth, // your better-auth instance (or interface-compatible adapter)
-    agentUserIds: ["..."], // users seeded with the "agent" role
-    agentEmails: ["agent@example.com"], // or seed agents by email
+    userIsAgent: (user) => user.email?.endsWith("@agents.example.com") ?? false, // seed agents by predicate (email is null when unavailable)
     managementApiKey: process.env.MANAGEMENT_API_KEY, // enables the management API
     availableTags: ["billing", "bug", "question"],
     maxAttachmentBytes: 5 * 1024 * 1024,

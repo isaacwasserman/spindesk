@@ -68,8 +68,11 @@ export interface CreateAppOptions {
 	/** SQLite path; defaults to in-memory (great for tests). */
 	dbPath?: string;
 	baseURL?: string;
-	/** better-auth user ids to seed with the "agent" role. */
-	agentUserIds?: string[];
+	/** Predicate seeding the "agent" role on first sight (id + nullable email). */
+	userIsAgent?: (user: {
+		id: string;
+		email: string | null;
+	}) => boolean | Promise<boolean>;
 	/** Shared secret authorizing the management API (agent promotion). */
 	managementApiKey?: string;
 	/** Allowed tag vocabulary passed to the service. */
@@ -95,7 +98,7 @@ export async function createApp(opts: CreateAppOptions = {}): Promise<App> {
 	const {
 		dbPath = ":memory:",
 		baseURL = "http://localhost:3000",
-		agentUserIds = [],
+		userIsAgent,
 		managementApiKey,
 		availableTags,
 		metadataSchema,
@@ -127,7 +130,7 @@ export async function createApp(opts: CreateAppOptions = {}): Promise<App> {
 		},
 		config: {
 			auth,
-			agentUserIds,
+			userIsAgent,
 			managementApiKey,
 			availableTags,
 			metadataSchema,

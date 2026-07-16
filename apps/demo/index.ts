@@ -9,13 +9,17 @@
 import ui from "./src/ui/index.html";
 import { createApp } from "./src/host/server";
 
+const agentUserIds = (
+	process.env.AGENT_USER_IDS ?? "cvhLAduqLp0UFcNIVVIqLqZFHR0mwjLB"
+)
+	.split(",")
+	.map((s) => s.trim())
+	.filter(Boolean);
+
 const app = await createApp({
 	dbPath: process.env.DB_PATH ?? "servicedesk.db",
 	baseURL: process.env.BASE_URL ?? "http://localhost:3000",
-	agentUserIds: (process.env.AGENT_USER_IDS ?? "cvhLAduqLp0UFcNIVVIqLqZFHR0mwjLB")
-		.split(",")
-		.map((s) => s.trim())
-		.filter(Boolean),
+	userIsAgent: (user) => agentUserIds.includes(user.id),
 	managementApiKey: process.env.MANAGEMENT_API_KEY,
 	availableTags: (process.env.AVAILABLE_TAGS ?? "billing,bug,feature,urgent,question")
 		.split(",")
