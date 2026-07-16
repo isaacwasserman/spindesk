@@ -1,5 +1,0 @@
----
-"@spindesk/core": minor
----
-
-Add an `onActivity` config hook and a persisted activity log. Every ticketing mutation now emits a granular `SpindeskActivity` (`ticket-created`, `ticket-updated`, `ticket-status-changed`, `ticket-assigned`, `ticket-archived`/`-unarchived`, `comment-created`/`-edited`/`-deleted`, `attachment-created`/`-deleted`, `user-role-changed`), which is written to a new denormalized `activities` table and then passed to the host-supplied `onActivity(activity, context)` callback. Hook errors are logged and swallowed, so a failing hook never breaks the originating request. Two read endpoints expose the log — `GET /activities` (access-scoped: agents see everything, users see their own tickets' activities plus their own role changes; supports `type`/`ticketId` filters and pagination) and `GET /tickets/:id/activities`. New comment `PATCH`/`DELETE` endpoints (`/tickets/:id/comments/:commentId`) back the `comment-edited`/`comment-deleted` activities, and comments gain a nullable `updatedAt`.
