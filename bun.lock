@@ -41,7 +41,7 @@
       "dependencies": {
         "@standard-schema/spec": "1.1.0",
         "better-call": "^2.0.5",
-        "futonic": "0.1.1-canary.063ab81",
+        "futonic": "0.2.0",
         "kysely": "^0.29.3",
         "liqe": "^3.8.7",
         "zod": "^4.4.3",
@@ -457,7 +457,7 @@
 
     "fsevents": ["fsevents@2.3.3", "", { "os": "darwin" }, "sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw=="],
 
-    "futonic": ["futonic@0.1.1-canary.063ab81", "", { "dependencies": { "@better-fetch/fetch": "^1.3.1", "@standard-community/standard-json": "^0.3.5", "@standard-schema/spec": "^1.1.0", "openapi-types": "^12.1.3" }, "peerDependencies": { "better-call": ">=2.0.0", "better-sqlite3": ">=9.0.0", "kysely": ">=0.29.0" }, "optionalPeers": ["better-sqlite3"] }, "sha512-VXZ79OVnrfXFpym2mzuwzEVibky8Sfh965su1ajglE8orw4+rPdqoUpjq5N0YMJ2GAurniiEnqKZq3bLorW4qg=="],
+    "futonic": ["futonic@0.2.0", "", { "dependencies": { "@better-fetch/fetch": "^1.3.1", "@standard-community/standard-json": "^0.3.5", "@standard-schema/spec": "^1.1.0", "openapi-types": "^12.1.3" }, "peerDependencies": { "better-call": ">=2.0.0", "better-sqlite3": ">=9.0.0", "kysely": ">=0.29.0" }, "optionalPeers": ["better-sqlite3"] }, "sha512-7oLbFs2a9yvgWagyA9aT0EQG7i6P0TlDZhZaCYZ3yKWjdXCydHPfu3Fhs+umSV9SpjtFcCLzj7x/IiReuN4vgw=="],
 
     "get-caller-file": ["get-caller-file@2.0.5", "", {}, "sha512-DyFP3BM/3YHTQOCUL/w0OZHR0lpKeGrxotcHWcqNEdnltqFwXVfhEBQ94eIo34AfQpo0rGki4cyIiftY06h2Fg=="],
 
