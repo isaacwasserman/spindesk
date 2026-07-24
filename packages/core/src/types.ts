@@ -3,6 +3,7 @@ import type {
 	DefineEndpoint,
 	KyselyFromServiceDBSchema,
 	ServiceContext,
+	StorageProvider,
 } from "futonic";
 import type { OnActivity } from "./activity.js";
 import type { ServiceDeskSchema } from "./schema.js";
@@ -93,12 +94,14 @@ export type ServiceDeskConfig = {
 export const DEFAULT_MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 
 /**
- * ServiceContext scoped to this service. futonic's context now carries a typed
- * Kysely instance (`db`), the validated `config`, and a `logger`.
+ * ServiceContext scoped to this service. futonic's context carries a typed
+ * Kysely instance (`db`), the validated `config`, a `logger`, and — because the
+ * service declares storage — a blob-storage handle (`storage`).
  */
 export type SvcCtx = ServiceContext<
 	ServiceDeskConfig,
-	KyselyFromServiceDBSchema<ServiceDeskSchema>
+	KyselyFromServiceDBSchema<ServiceDeskSchema>,
+	StorageProvider
 >;
 
 /**
@@ -108,7 +111,8 @@ export type SvcCtx = ServiceContext<
  */
 export type DefineServiceDeskEndpoint = DefineEndpoint<
 	ServiceDeskConfig,
-	KyselyFromServiceDBSchema<ServiceDeskSchema>
+	KyselyFromServiceDBSchema<ServiceDeskSchema>,
+	StorageProvider
 >;
 
 /** Identity resolved by the auth middleware for each request. */

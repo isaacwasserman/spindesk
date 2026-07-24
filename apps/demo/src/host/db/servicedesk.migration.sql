@@ -25,7 +25,6 @@ CREATE TABLE IF NOT EXISTS spindesk_attachments (
   filename TEXT NOT NULL,
   content_type TEXT NOT NULL,
   size INTEGER NOT NULL,
-  data BLOB NOT NULL,
   uploaded_by TEXT NOT NULL,
   created_at TEXT NOT NULL,
   FOREIGN KEY (ticket_id) REFERENCES spindesk_tickets(id) ON DELETE CASCADE

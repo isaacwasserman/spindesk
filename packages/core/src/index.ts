@@ -51,6 +51,7 @@ export const spindeskServiceDefinition = defineService({
 	id: "spindesk",
 	dbSchema: serviceDeskSchema,
 	configSchema,
+	storage: {},
 	endpoints: (defineEndpoint) => createSpindeskEndpoints(defineEndpoint),
 });
 

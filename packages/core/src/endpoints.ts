@@ -167,7 +167,7 @@ function paginate(query?: { limit?: string; offset?: string }) {
 	return { limit, offset };
 }
 
-/** Attachment metadata columns (everything except the binary `data` blob). */
+/** Columns of the attachments table (metadata only; bytes live in blob storage). */
 const ATTACHMENT_META = [
 	"id",
 	"ticketId",
@@ -177,6 +177,9 @@ const ATTACHMENT_META = [
 	"uploadedBy",
 	"createdAt",
 ] as const;
+
+/** Blob-storage key for an attachment's bytes, derived from its id. */
+const attachmentKey = (id: string) => `attachments/${id}`;
 
 const ALWAYS_TRUE = sql<SqlBool>`1 = 1`;
 
@@ -1113,19 +1116,27 @@ export function createSpindeskEndpoints<
 				offset += chunk.byteLength;
 			}
 
-			const row = {
+			const meta = {
 				id: crypto.randomUUID(),
 				ticketId: ticket.id,
 				filename,
 				contentType,
 				size,
-				data,
 				uploadedBy: serviceDesk.userId,
 				createdAt: new Date().toISOString(),
 			};
-			await svc.db.insertInto("attachments").values(row).execute();
-			svc.logger.info(`Attachment stored: ${row.id} (${size} bytes)`);
-			const { data: _data, ...meta } = row;
+			const stored = await svc.storage.put({
+				key: attachmentKey(meta.id),
+				body: data,
+				contentType,
+			});
+			if (stored.error) {
+				throw new APIError("INTERNAL_SERVER_ERROR", {
+					message: `Failed to store attachment: ${stored.message}`,
+				});
+			}
+			await svc.db.insertInto("attachments").values(meta).execute();
+			svc.logger.info(`Attachment stored: ${meta.id} (${size} bytes)`);
 			await recordActivity(svc, {
 				type: "attachment-created",
 				actor: { id: serviceDesk.userId, role: serviceDesk.role },
@@ -1166,15 +1177,17 @@ export function createSpindeskEndpoints<
 			const ticket = await getAccessibleTicket(context, id);
 			const row = await svc.db
 				.selectFrom("attachments")
-				.selectAll()
+				.select([...ATTACHMENT_META])
 				.where("id", "=", attId)
 				.executeTakeFirst();
 			if (!row || row.ticketId !== ticket.id) {
 				throw new APIError("NOT_FOUND", { message: "Attachment not found" });
 			}
-			const raw = row.data as Uint8Array | ArrayBufferLike;
-			const bytes = raw instanceof Uint8Array ? raw : new Uint8Array(raw);
-			return new Response(bytes as unknown as BodyInit, {
+			const stored = await svc.storage.get({ key: attachmentKey(attId) });
+			if (stored.error || !stored.data) {
+				throw new APIError("NOT_FOUND", { message: "Attachment not found" });
+			}
+			return new Response(stored.data.body, {
 				headers: {
 					"content-type": String(row.contentType),
 					"content-length": String(row.size),
@@ -1196,7 +1209,7 @@ export function createSpindeskEndpoints<
 			const ticket = await getAccessibleTicket(context, id);
 			const row = await svc.db
 				.selectFrom("attachments")
-				.selectAll()
+				.select([...ATTACHMENT_META])
 				.where("id", "=", attId)
 				.executeTakeFirst();
 			if (!row || row.ticketId !== ticket.id) {
@@ -1206,6 +1219,12 @@ export function createSpindeskEndpoints<
 			const isOwner = ticket.userId === serviceDesk.userId;
 			if (!isAgent && !isOwner) {
 				throw new APIError("FORBIDDEN", { message: "Not allowed" });
+			}
+			const removed = await svc.storage.delete({ key: attachmentKey(attId) });
+			if (removed.error) {
+				throw new APIError("INTERNAL_SERVER_ERROR", {
+					message: `Failed to delete attachment: ${removed.message}`,
+				});
 			}
 			await svc.db.deleteFrom("attachments").where("id", "=", attId).execute();
 			await recordActivity(svc, {

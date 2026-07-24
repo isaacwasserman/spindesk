@@ -29,9 +29,8 @@ Spindesk uses the database your application already has. That means you own the 
 | `boolean`     | `boolean`   | `boolean`  | `integer` (0/1)     |
 | `timestamp`   | `timestamp` | `datetime` | `integer` (unixepoch) |
 | `json`        | `jsonb`     | `json`     | `text`              |
-| `blob`        | `bytea`     | `blob`     | `blob`              |
 
-Spindesk stores timestamps as ISO `string`s (`text`), so its own columns only use `string`, `json`, `integer`, and `blob`.
+Spindesk stores timestamps as ISO `string`s (`text`), so its own columns only use `string`, `json`, and `integer`.
 
 Table and column names are physically prefixed with `spindesk_` and stored in `snake_case`. The SQLite DDL below is illustrative; translate the types via the table above for other dialects.
 
@@ -62,7 +61,6 @@ CREATE TABLE IF NOT EXISTS spindesk_attachments (
   filename TEXT NOT NULL,
   content_type TEXT NOT NULL,
   size INTEGER NOT NULL,
-  data BLOB NOT NULL,
   uploaded_by TEXT NOT NULL,
   created_at TEXT NOT NULL,
   FOREIGN KEY (ticket_id) REFERENCES spindesk_tickets(id) ON DELETE CASCADE
@@ -90,6 +88,20 @@ import * as pg from "drizzle-orm/pg-core";
 import { generateSpindeskSchema } from "@spindesk/core/drizzle";
 
 export const spindeskTables = generateSpindeskSchema("pg", pg);
+```
+
+### Attachment storage
+
+Attachment bytes live in futonic's blob storage, not in the `spindesk_attachments` table — that table holds only metadata. By default the bytes go to futonic's built-in database-backed store, which keeps them in a shared, framework-owned `futonic_storage_objects` table it creates automatically on first use (so no extra DDL is required). This default is fine for development but not for large objects or production; supply a cloud-backed provider there via the constructor's `storage` option:
+
+```ts
+const service = createSpindesk({
+  database: { connection: db, provider: "sqlite" },
+  config: { auth /* … */ },
+  storage: {
+    provider: myS3StorageProvider, // any futonic StorageProvider; omit to use the DB-backed default
+  },
+});
 ```
 
 ## Quickstart
