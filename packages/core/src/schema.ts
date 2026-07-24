@@ -51,8 +51,8 @@ export const serviceDeskSchema = {
 				updatedAt: { type: "string" },
 			},
 		},
-		// Ticket file attachments. `data` holds the raw bytes (BYTEA in
-		// Postgres, BLOB in SQLite/MySQL).
+		// Ticket file attachments. Only metadata lives here; the bytes live in
+		// futonic's blob storage (`ctx.storage`), keyed by the attachment id.
 		attachments: {
 			name: "attachments",
 			columns: {
@@ -68,7 +68,6 @@ export const serviceDeskSchema = {
 				filename: { type: "string" },
 				contentType: { type: "string" },
 				size: { type: "integer" },
-				data: { type: "blob" },
 				uploadedBy: { type: "string" },
 				createdAt: { type: "string" },
 			},
