@@ -1,4 +1,5 @@
 import { type ClientOptions, createClient } from "better-call/client";
+import type { PresignedUpload } from "./endpoints.js";
 import type { SpindeskRouter, TicketMetadata } from "./index.js";
 
 export type SpindeskClient<M extends TicketMetadata = TicketMetadata> =
@@ -25,4 +26,43 @@ export function createSpindeskClient<
 		options: Options,
 	): ReturnType<typeof createClient<SpindeskRouter<M>, Options>> =>
 		createClient<SpindeskRouter<M>, Options>(options);
+}
+
+export type { PresignedUpload };
+
+/**
+ * Send bytes to the `upload` target returned by `POST /tickets/:id/attachments`,
+ * covering both shapes an adapter may hand back: a signed `PUT` (what the
+ * built-in database store always mints) or a `POST` form carrying the upload
+ * policy (what S3 mints for a size-capped upload). The request goes straight to
+ * the store, so no credentials are attached. Call the `/complete` endpoint after
+ * it resolves to publish the attachment.
+ */
+export async function sendPresignedUpload(
+	upload: PresignedUpload,
+	body: Blob,
+	options: { contentType?: string; filename?: string } = {},
+): Promise<void> {
+	const contentType =
+		options.contentType || body.type || "application/octet-stream";
+	let response: Response;
+	if (upload.method === "PUT") {
+		response = await fetch(upload.url, {
+			method: "PUT",
+			headers: { "content-type": contentType, ...upload.headers },
+			body,
+		});
+	} else {
+		const form = new FormData();
+		for (const [name, value] of Object.entries(upload.fields)) {
+			form.append(name, value);
+		}
+		form.append("file", body, options.filename);
+		response = await fetch(upload.url, { method: "POST", body: form });
+	}
+	if (!response.ok) {
+		throw new Error(
+			`Presigned upload failed (${response.status}): ${await response.text()}`,
+		);
+	}
 }

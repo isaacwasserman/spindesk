@@ -18,7 +18,7 @@ export const client = createSpindeskClient()({
 	throw: true,
 });
 
-/** Direct download URL for an attachment (streamed straight from the server). */
+/** Download URL for an attachment; redirects to a presigned URL on the store. */
 export const downloadUrl = (ticketId: string, attId: string) =>
 	`${BASE}/tickets/${ticketId}/attachments/${attId}`;
 

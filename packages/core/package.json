@@ -36,7 +36,8 @@
   "dependencies": {
     "@standard-schema/spec": "1.1.0",
     "better-call": "^2.0.5",
-    "futonic": "0.2.1-canary.5d9a5aa",
+    "files-sdk": "^2.2.1",
+    "futonic": "0.2.1-canary.b0fd21f",
     "kysely": "^0.29.3",
     "liqe": "^3.8.7",
     "zod": "^4.4.3"

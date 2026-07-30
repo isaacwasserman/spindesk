@@ -18,6 +18,18 @@ This is the usage reference. For the monorepo layout and the reference demo host
 bun add @spindesk/core
 ```
 
+### Entry points
+
+Everything a host needs is re-exported from Spindesk, so futonic never has to be a direct dependency.
+
+| Entry point              | Contents                                                                                                                                            |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@spindesk/core`         | `createSpindesk`, the DTO and config types (`Ticket`, `Comment`, `Attachment`, `ServiceDeskConfig`, …), `IMPERSONATION_HEADER`, `TICKET_STATUS`, and the storage types plus `FilesError` for inspecting a storage failure. |
+| `@spindesk/core/client`  | `createSpindeskClient` and `sendPresignedUpload`.                                                                                                     |
+| `@spindesk/core/drizzle` | `generateSpindeskSchema` (which includes the built-in store's table) and `SPINDESK_STORAGE_TABLE_NAME`.                                                |
+
+Backing attachments with anything other than the built-in database store is the one thing that needs a second package: install [files-sdk](https://files-sdk.dev) and pass one of its adapters as `storage.provider` (see [Attachment storage](#attachment-storage)).
+
 ## Database
 
 Spindesk uses the database your application already has. That means you own the tables and the DDL to create them. Spindesk ships a dialect-agnostic schema whose abstract column types map to different physical types per dialect:
@@ -62,6 +74,7 @@ CREATE TABLE IF NOT EXISTS spindesk_attachments (
   content_type TEXT NOT NULL,
   size INTEGER NOT NULL,
   uploaded_by TEXT NOT NULL,
+  status TEXT NOT NULL, -- "pending" until the presigned upload is confirmed, then "ready"
   created_at TEXT NOT NULL,
   FOREIGN KEY (ticket_id) REFERENCES spindesk_tickets(id) ON DELETE CASCADE
 );
@@ -77,6 +90,17 @@ CREATE TABLE IF NOT EXISTS spindesk_comments (
   FOREIGN KEY (ticket_id) REFERENCES spindesk_tickets(id) ON DELETE CASCADE,
   FOREIGN KEY (parent_id) REFERENCES spindesk_comments(id) ON DELETE CASCADE
 );
+
+-- Attachment bytes, only when they go to the built-in database store (see
+-- Attachment storage). It is created on first use, so this DDL is optional;
+-- `data` is `bytea` on PostgreSQL and `longblob` on MySQL.
+CREATE TABLE IF NOT EXISTS spindesk_storage_objects (
+  key TEXT PRIMARY KEY NOT NULL,
+  content_type TEXT,
+  size INTEGER NOT NULL,
+  data BLOB NOT NULL,
+  created_at TEXT NOT NULL
+);
 ```
 
 ### Drizzle
@@ -90,19 +114,54 @@ import { generateSpindeskSchema } from "@spindesk/core/drizzle";
 export const spindeskTables = generateSpindeskSchema("pg", pg);
 ```
 
+The result includes `spindeskStorageObjects`, the built-in store's table; drop that key if you back attachments with your own provider.
+
 ### Attachment storage
 
-Attachment bytes live in futonic's blob storage, not in the `spindesk_attachments` table — that table holds only metadata. By default the bytes go to futonic's built-in database-backed store, which keeps them in a shared, framework-owned `futonic_storage_objects` table it creates automatically on first use (so no extra DDL is required). This default is fine for development but not for large objects or production; supply a cloud-backed provider there via the constructor's `storage` option:
+Attachment bytes live in futonic's blob storage — a [files-sdk](https://files-sdk.dev) `Files` instance scoped to Spindesk's own key namespace — not in the `spindesk_attachments` table, which holds only metadata. Bytes never transit the app server: clients upload and download through **presigned URLs**.
+
+By default the bytes go to futonic's database-backed adapter, which keeps them in a `spindesk_storage_objects` table it creates on first use. That adapter can't sign its own URLs, so futonic signs against a transfer route it mounts at `/_storage` under your base path — which means you must supply a `signingKey` and the `baseUrl` the service is reachable at. **`createSpindesk` throws at construction if they're missing.** The default is fine for development but not for large objects or production; supply a files-sdk adapter there:
 
 ```ts
+import { s3 } from "files-sdk/s3";
+
 const service = createSpindesk({
   database: { connection: db, provider: "sqlite" },
   config: { auth /* … */ },
   storage: {
-    provider: myS3StorageProvider, // any futonic StorageProvider; omit to use the DB-backed default
+    // Any files-sdk adapter; omit for the database-backed default.
+    provider: s3({ bucket: "my-uploads", region: "us-east-1" }),
+    // Required only for adapters that can't sign their own URLs.
+    signingKey: process.env.STORAGE_SIGNING_KEY,
+    baseUrl: "https://app.example.com/api/servicedesk",
   },
 });
 ```
+
+An adapter that signs its own URLs (S3 and friends) needs neither option, and futonic mounts no transfer route for it. files-sdk ships adapters for 40-plus backends behind its own subpaths (`files-sdk/s3`, `files-sdk/gcs`, `files-sdk/azure`, `files-sdk/memory`, …), each with its own optional peer dependencies; install `files-sdk` to reach them. The adapter type is re-exported as `FutonicStorageAdapter`.
+
+#### Uploading an attachment
+
+Uploads are two-phase. `POST /tickets/:id/attachments` takes the file's metadata and returns an `attachmentId` plus a presigned `upload` target; the client writes the bytes straight to the store and then calls `/complete`, which verifies the object landed, records its true size and content type, and publishes the attachment. Pending uploads are never listed or served, so an abandoned upload simply never appears.
+
+`@spindesk/core/client` ships `sendPresignedUpload` for the middle step — it handles both target shapes an adapter may return (a signed `PUT`, which is what the built-in store always mints, or a `POST` form, which is what S3 mints for a size-capped upload):
+
+```ts
+import { sendPresignedUpload } from "@spindesk/core/client";
+
+const { attachmentId, upload } = await client("@post/tickets/:id/attachments", {
+  params: { id: ticketId },
+  body: { filename: file.name, contentType: file.type, size: file.size },
+});
+await sendPresignedUpload(upload, file, { contentType: file.type, filename: file.name });
+const attachment = await client("@post/tickets/:id/attachments/:attId/complete", {
+  params: { id: ticketId, attId: attachmentId },
+});
+```
+
+`maxAttachmentBytes` is enforced twice: up front against the declared `size`, and again at `/complete` against the object actually stored (oversized objects are deleted and rejected with `413`). Every presign also carries the cap, so the adapter rejects the write itself — an S3 `POST` policy or, for the built-in store, the transfer route. Presigned URLs are valid for 15 minutes.
+
+Downloads work the same way in reverse: `GET /tickets/:id/attachments/:attId` authorizes the request and responds `302` to a short-lived presigned URL that serves the bytes with a `content-disposition` naming the file, so `<a href download>` and `fetch` both work unchanged.
 
 ## Quickstart
 
@@ -147,9 +206,10 @@ All routes are relative to the mount path. Requests are authenticated via the co
 | `GET`    | `/tickets/:id/comments`           | List comments (threaded).            |
 | `POST`   | `/tickets/:id/comments`           | Add a comment or reply.              |
 | `GET`    | `/tags`                           | List the allowed tag vocabulary.     |
-| `POST`   | `/tickets/:id/attachments`        | Upload an attachment.                |
+| `POST`   | `/tickets/:id/attachments`        | Start an upload; returns a presigned URL. |
+| `POST`   | `/tickets/:id/attachments/:attId/complete` | Confirm the upload and publish it. |
 | `GET`    | `/tickets/:id/attachments`        | List a ticket's attachments.         |
-| `GET`    | `/tickets/:id/attachments/:attId` | Download an attachment.              |
+| `GET`    | `/tickets/:id/attachments/:attId` | Download an attachment (`302` to a presigned URL). |
 | `DELETE` | `/tickets/:id/attachments/:attId` | Delete an attachment.                |
 | `PATCH`  | `/users/:id/role`                 | Set a user's role (agents only).     |
 

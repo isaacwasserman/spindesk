@@ -1,4 +1,6 @@
+import type { StandardSchemaV1 } from "@standard-schema/spec";
 import { APIError } from "better-call";
+import type { FilesErrorCode, SignedUpload } from "files-sdk";
 import {
 	type Expression,
 	type ExpressionBuilder,
@@ -105,6 +107,25 @@ const attachmentSchema = z.object({
 	createdAt: z.string(),
 });
 
+/** Mirrors files-sdk's `SignedUpload`: a signed `PUT`, or a `POST` form. */
+const presignedUploadSchema = z.discriminatedUnion("method", [
+	z.object({
+		method: z.literal("PUT"),
+		url: z.string(),
+		headers: z.record(z.string(), z.string()).optional(),
+	}),
+	z.object({
+		method: z.literal("POST"),
+		url: z.string(),
+		fields: z.record(z.string(), z.string()),
+	}),
+]) satisfies StandardSchemaV1<unknown, SignedUpload>;
+
+const uploadTargetSchema = z.object({
+	attachmentId: z.string(),
+	upload: presignedUploadSchema,
+});
+
 const meSchema = z.object({
 	id: z.string(),
 	role: roleSchema,
@@ -146,6 +167,7 @@ export type Ticket<M extends TicketMetadata = TicketMetadata> = z.infer<
 >;
 export type Comment = z.infer<typeof commentSchema>;
 export type Attachment = z.infer<typeof attachmentSchema>;
+export type PresignedUpload = SignedUpload;
 
 function configOf(svc: SvcCtx): ServiceDeskConfig {
 	return svc.config as unknown as ServiceDeskConfig;
@@ -178,8 +200,89 @@ const ATTACHMENT_META = [
 	"createdAt",
 ] as const;
 
+const ATTACHMENT_ROW = [...ATTACHMENT_META, "status"] as const;
+
+/**
+ * Uploads are two-phase: presigning reserves a `pending` row and hands the
+ * client a URL it writes to directly, and the completion call promotes the row
+ * to `ready` once the bytes are in the store. Only `ready` rows are listed and
+ * downloadable.
+ */
+const PENDING = "pending";
+const READY = "ready";
+
+type AttachmentRow = Attachment & { status: string };
+
+function toAttachmentDto(row: AttachmentRow): Attachment {
+	const { status: _status, ...meta } = row;
+	return meta;
+}
+
 /** Blob-storage key for an attachment's bytes, derived from its id. */
 const attachmentKey = (id: string) => `attachments/${id}`;
+
+/** Lifetime of the presigned URLs handed to clients, matching futonic's default. */
+const UPLOAD_URL_TTL_SECONDS = 900;
+const DOWNLOAD_URL_TTL_SECONDS = 900;
+
+const FILES_ERROR_CODES = new Set<string>([
+	"NotFound",
+	"Unauthorized",
+	"Conflict",
+	"ReadOnly",
+	"Provider",
+]);
+
+/**
+ * files-sdk's code for a thrown storage failure, read structurally: a second
+ * copy of files-sdk in the tree would defeat `instanceof FilesError`.
+ */
+function filesErrorCode(error: unknown): FilesErrorCode | null {
+	const code = (error as { code?: unknown } | null | undefined)?.code;
+	return typeof code === "string" && FILES_ERROR_CODES.has(code)
+		? (code as FilesErrorCode)
+		: null;
+}
+
+/** Translate a thrown storage failure into the matching HTTP error. */
+function storageFailed(error: unknown, context: string): never {
+	const message = `${context}: ${
+		error instanceof Error ? error.message : String(error)
+	}`;
+	switch (filesErrorCode(error)) {
+		case "NotFound":
+			throw new APIError("NOT_FOUND", { message: "Attachment not found" });
+		case "Unauthorized":
+		case "Provider":
+			throw new APIError("BAD_GATEWAY", { message });
+		default:
+			throw new APIError("INTERNAL_SERVER_ERROR", { message });
+	}
+}
+
+/** Run a storage call, mapping any failure onto {@link storageFailed}. */
+async function storageCall<T>(
+	operation: () => Promise<T>,
+	context: string,
+): Promise<T> {
+	try {
+		return await operation();
+	} catch (error) {
+		storageFailed(error, context);
+	}
+}
+
+/**
+ * RFC 6266 `attachment` disposition. The filename is user-supplied and lands in
+ * a response header (and, on a signing provider, in a signed query parameter),
+ * so header-unsafe characters are stripped from the ASCII form.
+ */
+function attachmentDisposition(filename: string): string {
+	const ascii = filename.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "");
+	return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(
+		filename,
+	)}`;
+}
 
 const ALWAYS_TRUE = sql<SqlBool>`1 = 1`;
 
@@ -1058,90 +1161,135 @@ export function createSpindeskEndpoints<
 	);
 
 	/**
-	 * Streamed file upload. `disableBody` stops better-call from buffering the
-	 * body; we read `ctx.request.body` as a stream and enforce the size cap
-	 * incrementally, aborting early on overflow (413).
+	 * Phase one of an upload: reserve a pending attachment and mint a presigned
+	 * URL the client writes the bytes to directly. They never transit this
+	 * server; `completeAttachmentUpload` publishes the attachment once they land.
 	 */
-	const uploadAttachment = createEndpoint(
+	const createAttachmentUpload = createEndpoint(
 		"/tickets/:id/attachments",
 		{
 			method: "POST",
-			disableBody: true,
-			requireRequest: true,
-			output: attachmentSchema,
+			body: z.object({
+				filename: z.string().min(1),
+				contentType: z.string().min(1).optional(),
+				/** Declared byte count, rejected up front when over the cap. */
+				size: z.number().int().nonnegative().optional(),
+			}),
+			output: uploadTargetSchema,
 		},
 		async (ctx) => {
 			const context = (ctx as unknown as Ctx).context;
 			const { serviceCtx: svc, serviceDesk } = context;
 			const { id } = ctx.params as { id: string };
 			const ticket = await getAccessibleTicket(context, id);
-
-			const req = ctx.request as Request;
+			const { filename, size } = ctx.body;
+			const contentType = ctx.body.contentType ?? "application/octet-stream";
 			const max =
 				configOf(svc).maxAttachmentBytes ?? DEFAULT_MAX_ATTACHMENT_BYTES;
-			const tooLarge = () => {
+			if (size !== undefined && size > max) {
 				throw new APIError("PAYLOAD_TOO_LARGE", {
 					message: `Attachment exceeds ${max} bytes`,
 				});
-			};
-
-			// Fast reject on declared size, then enforce during streaming.
-			const declared = Number(req.headers.get("content-length") || 0);
-			if (declared > max) tooLarge();
-			if (!req.body) {
-				throw new APIError("BAD_REQUEST", { message: "Empty upload" });
 			}
-			const filename = req.headers.get("x-filename") || "upload.bin";
-			const contentType =
-				req.headers.get("content-type") || "application/octet-stream";
 
-			const reader = req.body.getReader();
-			const chunks: Uint8Array[] = [];
-			let size = 0;
-			while (true) {
-				const { done, value } = await reader.read();
-				if (done) break;
-				if (!value) continue;
-				size += value.byteLength;
-				if (size > max) {
-					await reader.cancel();
-					tooLarge();
+			const attachmentId = crypto.randomUUID();
+			const upload = await storageCall(
+				() =>
+					svc.storage.signedUploadUrl(attachmentKey(attachmentId), {
+						expiresIn: UPLOAD_URL_TTL_SECONDS,
+						contentType,
+						maxSize: max,
+						// files-sdk floors a capped upload at 1 byte; empty ones are legal here.
+						minSize: 0,
+					}),
+				"Failed to presign attachment upload",
+			);
+			await svc.db
+				.insertInto("attachments")
+				.values({
+					id: attachmentId,
+					ticketId: ticket.id,
+					filename,
+					contentType,
+					size: size ?? 0,
+					uploadedBy: serviceDesk.userId,
+					status: PENDING,
+					createdAt: new Date().toISOString(),
+				})
+				.execute();
+			return { attachmentId, upload };
+		},
+	);
+
+	/**
+	 * Phase two: confirm the presigned upload landed. The stored object is the
+	 * source of truth for size and content type, and the cap is re-checked
+	 * against it — a provider that can't enforce `maxSizeBytes` itself would
+	 * otherwise let an oversized object through.
+	 */
+	const completeAttachmentUpload = createEndpoint(
+		"/tickets/:id/attachments/:attId/complete",
+		{ method: "POST", output: attachmentSchema },
+		async (ctx) => {
+			const context = (ctx as unknown as Ctx).context;
+			const { serviceCtx: svc, serviceDesk } = context;
+			const { id, attId } = ctx.params as { id: string; attId: string };
+			const ticket = await getAccessibleTicket(context, id);
+			const row = await svc.db
+				.selectFrom("attachments")
+				.select([...ATTACHMENT_ROW])
+				.where("id", "=", attId)
+				.executeTakeFirst();
+			if (!row || row.ticketId !== ticket.id) {
+				throw new APIError("NOT_FOUND", { message: "Attachment not found" });
+			}
+			if (row.uploadedBy !== serviceDesk.userId) {
+				throw new APIError("FORBIDDEN", { message: "Not your upload" });
+			}
+			if (row.status === READY) return toAttachmentDto(row);
+
+			const key = attachmentKey(attId);
+			const stored = await svc.storage.head(key).catch((error: unknown) => {
+				if (filesErrorCode(error) === "NotFound") {
+					throw new APIError("BAD_REQUEST", {
+						message: "No uploaded object found for this attachment",
+					});
 				}
-				chunks.push(value);
-			}
-			const data = new Uint8Array(size);
-			let offset = 0;
-			for (const chunk of chunks) {
-				data.set(chunk, offset);
-				offset += chunk.byteLength;
+				storageFailed(error, "Failed to inspect uploaded attachment");
+			});
+			const max =
+				configOf(svc).maxAttachmentBytes ?? DEFAULT_MAX_ATTACHMENT_BYTES;
+			if (stored.size > max) {
+				await svc.storage.delete(key).catch(() => undefined);
+				await svc.db
+					.deleteFrom("attachments")
+					.where("id", "=", attId)
+					.execute();
+				throw new APIError("PAYLOAD_TOO_LARGE", {
+					message: `Attachment exceeds ${max} bytes`,
+				});
 			}
 
 			const meta = {
-				id: crypto.randomUUID(),
-				ticketId: ticket.id,
-				filename,
-				contentType,
-				size,
-				uploadedBy: serviceDesk.userId,
-				createdAt: new Date().toISOString(),
+				...toAttachmentDto(row),
+				contentType: stored.type || row.contentType,
+				size: stored.size,
 			};
-			const stored = await svc.storage.put({
-				key: attachmentKey(meta.id),
-				body: data,
-				contentType,
-			});
-			if (stored.error) {
-				throw new APIError("INTERNAL_SERVER_ERROR", {
-					message: `Failed to store attachment: ${stored.message}`,
-				});
-			}
-			await svc.db.insertInto("attachments").values(meta).execute();
-			svc.logger.info(`Attachment stored: ${meta.id} (${size} bytes)`);
+			await svc.db
+				.updateTable("attachments")
+				.set({
+					contentType: meta.contentType,
+					size: meta.size,
+					status: READY,
+				})
+				.where("id", "=", attId)
+				.execute();
+			svc.logger.info(`Attachment stored: ${attId} (${meta.size} bytes)`);
 			await recordActivity(svc, {
 				type: "attachment-created",
 				actor: { id: serviceDesk.userId, role: serviceDesk.role },
 				ticketId: ticket.id,
-				attachmentId: meta.id,
+				attachmentId: attId,
 				attachment: meta,
 			});
 			return meta;
@@ -1161,12 +1309,17 @@ export function createSpindeskEndpoints<
 				.selectFrom("attachments")
 				.select([...ATTACHMENT_META])
 				.where("ticketId", "=", ticket.id)
+				.where("status", "=", READY)
 				.orderBy("createdAt", "asc")
 				.execute();
 			return { attachments: rows, total: rows.length };
 		},
 	);
 
+	/**
+	 * Redirects to a short-lived presigned download URL, so the bytes stream from
+	 * the store rather than through this server.
+	 */
 	const downloadAttachment = createEndpoint(
 		"/tickets/:id/attachments/:attId",
 		{ method: "GET" },
@@ -1177,25 +1330,21 @@ export function createSpindeskEndpoints<
 			const ticket = await getAccessibleTicket(context, id);
 			const row = await svc.db
 				.selectFrom("attachments")
-				.select([...ATTACHMENT_META])
+				.select([...ATTACHMENT_ROW])
 				.where("id", "=", attId)
 				.executeTakeFirst();
-			if (!row || row.ticketId !== ticket.id) {
+			if (!row || row.ticketId !== ticket.id || row.status !== READY) {
 				throw new APIError("NOT_FOUND", { message: "Attachment not found" });
 			}
-			const stored = await svc.storage.get({ key: attachmentKey(attId) });
-			if (stored.error || !stored.data) {
-				throw new APIError("NOT_FOUND", { message: "Attachment not found" });
-			}
-			return new Response(stored.data.body, {
-				headers: {
-					"content-type": String(row.contentType),
-					"content-length": String(row.size),
-					"content-disposition": `attachment; filename="${String(
-						row.filename,
-					).replace(/"/g, "")}"`,
-				},
-			});
+			const location = await storageCall(
+				() =>
+					svc.storage.url(attachmentKey(attId), {
+						expiresIn: DOWNLOAD_URL_TTL_SECONDS,
+						responseContentDisposition: attachmentDisposition(row.filename),
+					}),
+				"Failed to presign attachment download",
+			);
+			return new Response(null, { status: 302, headers: { location } });
 		},
 	);
 
@@ -1220,12 +1369,12 @@ export function createSpindeskEndpoints<
 			if (!isAgent && !isOwner) {
 				throw new APIError("FORBIDDEN", { message: "Not allowed" });
 			}
-			const removed = await svc.storage.delete({ key: attachmentKey(attId) });
-			if (removed.error) {
-				throw new APIError("INTERNAL_SERVER_ERROR", {
-					message: `Failed to delete attachment: ${removed.message}`,
-				});
-			}
+			// A pending attachment may have no object; dropping the row is still right.
+			await svc.storage.delete(attachmentKey(attId)).catch((error: unknown) => {
+				if (filesErrorCode(error) !== "NotFound") {
+					storageFailed(error, "Failed to delete attachment");
+				}
+			});
 			await svc.db.deleteFrom("attachments").where("id", "=", attId).execute();
 			await recordActivity(svc, {
 				type: "attachment-deleted",
@@ -1361,7 +1510,8 @@ export function createSpindeskEndpoints<
 		deleteComment: deleteComment,
 		setUserRole: setUserRole,
 		promoteAgent: promoteAgent,
-		uploadAttachment: uploadAttachment,
+		createAttachmentUpload: createAttachmentUpload,
+		completeAttachmentUpload: completeAttachmentUpload,
 		listAttachments: listAttachments,
 		downloadAttachment: downloadAttachment,
 		deleteAttachment: deleteAttachment,

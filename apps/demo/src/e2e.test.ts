@@ -604,7 +604,7 @@ describe("service-desk", () => {
 		expect(page3.tickets).toHaveLength(1);
 	});
 
-	test("attachments: streamed upload, download, list, 5MB cap, delete", async () => {
+	test("attachments: presigned upload, download, list, 5MB cap, delete", async () => {
 		const t = await (
 			await post(app, `${MOUNT}/tickets`, H[USER_ID], {
 				subject: "s",
@@ -614,41 +614,73 @@ describe("service-desk", () => {
 		const aUrl = `${MOUNT}/tickets/${t.id}/attachments`;
 		const payload = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
 
-		const up = await call(app, aUrl, H[USER_ID], {
-			method: "POST",
-			body: payload,
-			headers: { "x-filename": "data.bin", "content-type": "application/octet-stream" },
+		const presigned = await post(app, aUrl, H[USER_ID], {
+			filename: "data.bin",
+			contentType: "application/octet-stream",
+			size: payload.length,
 		});
-		expect(up.status).toBe(200);
-		const meta = await up.json() as any;
+		expect(presigned.status).toBe(200);
+		const { attachmentId, upload } = await presigned.json() as any;
+		expect(upload.method).toBe("PUT");
+
+		// pending uploads stay out of the listing
+		expect(((await (await call(app, aUrl, H[USER_ID])).json()) as any).total).toBe(0);
+
+		const put = await app.fetch(
+			new Request(upload.url, {
+				method: "PUT",
+				body: payload,
+				headers: { "content-type": "application/octet-stream" },
+			}),
+		);
+		expect(put.status).toBe(204);
+
+		const meta = await (
+			await post(app, `${aUrl}/${attachmentId}/complete`, H[USER_ID], {})
+		).json() as any;
 		expect(meta.filename).toBe("data.bin");
 		expect(meta.size).toBe(10);
-		expect(meta.data).toBeUndefined();
 
-		// list excludes data
 		const list = await (await call(app, aUrl, H[USER_ID])).json() as any;
 		expect(list.total).toBe(1);
-		expect(list.attachments[0].data).toBeUndefined();
+		expect(list.attachments[0].id).toBe(attachmentId);
 
-		// download bytes match
-		const dl = await call(app, `${aUrl}/${meta.id}`, H[USER_ID]);
-		expect(dl.status).toBe(200);
-		expect(new Uint8Array(await dl.arrayBuffer())).toEqual(payload);
+		// download redirects to the presigned URL, which serves the bytes
+		const dl = await call(app, `${aUrl}/${attachmentId}`, H[USER_ID]);
+		expect(dl.status).toBe(302);
+		const bytes = await app.fetch(
+			new Request(dl.headers.get("location") as string),
+		);
+		expect(new Uint8Array(await bytes.arrayBuffer())).toEqual(payload);
 
-		// >5MB rejected (declared via content-length; body streamed)
-		const big = new Uint8Array(5 * 1024 * 1024 + 1);
-		const tooBig = await call(app, aUrl, H[USER_ID], {
-			method: "POST",
-			body: big,
-			headers: { "x-filename": "big.bin" },
+		// >5MB rejected up front on the declared size
+		const tooBig = await post(app, aUrl, H[USER_ID], {
+			filename: "big.bin",
+			size: 5 * 1024 * 1024 + 1,
 		});
 		expect(tooBig.status).toBe(413);
 
+		// ... and by the presigned URL itself when the declared size lied
+		const understated = await post(app, aUrl, H[USER_ID], {
+			filename: "sneaky.bin",
+			contentType: "application/octet-stream",
+			size: 1,
+		});
+		const sneaky = await understated.json() as any;
+		const overflow = await app.fetch(
+			new Request(sneaky.upload.url, {
+				method: "PUT",
+				body: new Uint8Array(5 * 1024 * 1024 + 1),
+				headers: { "content-type": "application/octet-stream" },
+			}),
+		);
+		expect(overflow.status).toBe(413);
+
 		// unrelated user cannot download
-		expect((await call(app, `${aUrl}/${meta.id}`, H[OTHER_ID])).status).toBe(403);
+		expect((await call(app, `${aUrl}/${attachmentId}`, H[OTHER_ID])).status).toBe(403);
 
 		// delete
-		expect((await call(app, `${aUrl}/${meta.id}`, H[USER_ID], { method: "DELETE" })).status).toBe(200);
+		expect((await call(app, `${aUrl}/${attachmentId}`, H[USER_ID], { method: "DELETE" })).status).toBe(200);
 		const after = await (await call(app, aUrl, H[USER_ID])).json() as any;
 		expect(after.total).toBe(0);
 	});
@@ -813,13 +845,21 @@ describe("service-desk", () => {
 		expect(all.total).toBe(2);
 
 		// impersonation reaches every endpoint, including attachment upload
-		const up = await call(mApp, `${tickets}/${created.id}/attachments`, imp(USER_ID), {
-			method: "POST",
-			body: new Uint8Array([1, 2, 3]),
-			headers: { "x-filename": "note.txt" },
-		});
+		const aUrl = `${tickets}/${created.id}/attachments`;
+		const up = await post(mApp, aUrl, imp(USER_ID), { filename: "note.txt" });
 		expect(up.status).toBe(200);
-		expect((await up.json() as any).uploadedBy).toBe(USER_ID);
+		const { attachmentId, upload } = await up.json() as any;
+		await mApp.fetch(
+			new Request(upload.url, {
+				method: "PUT",
+				body: new Uint8Array([1, 2, 3]),
+				headers: { "content-type": "application/octet-stream" },
+			}),
+		);
+		const completed = await (
+			await post(mApp, `${aUrl}/${attachmentId}/complete`, imp(USER_ID), {})
+		).json() as any;
+		expect(completed.uploadedBy).toBe(USER_ID);
 	});
 
 	test("impersonation is rejected when no management key is configured", async () => {
@@ -1100,14 +1140,19 @@ describe("activity log + onActivity hook", () => {
 				description: "d",
 			})
 		).json() as any;
-		const up = await (
-			await call(app, `${MOUNT}/tickets/${t.id}/attachments`, H[USER_ID], {
-				method: "POST",
-				body: new Uint8Array([1, 2, 3]),
-				headers: { "x-filename": "a.bin" },
-			})
+		const aUrl = `${MOUNT}/tickets/${t.id}/attachments`;
+		const { attachmentId, upload } = await (
+			await post(app, aUrl, H[USER_ID], { filename: "a.bin" })
 		).json() as any;
-		await del(app, `${MOUNT}/tickets/${t.id}/attachments/${up.id}`, H[USER_ID]);
+		await app.fetch(
+			new Request(upload.url, {
+				method: "PUT",
+				body: new Uint8Array([1, 2, 3]),
+				headers: { "content-type": "application/octet-stream" },
+			}),
+		);
+		await post(app, `${aUrl}/${attachmentId}/complete`, H[USER_ID], {});
+		await del(app, `${aUrl}/${attachmentId}`, H[USER_ID]);
 
 		expect(typesFor(t.id)).toContain("attachment-created");
 		expect(typesFor(t.id)).toContain("attachment-deleted");

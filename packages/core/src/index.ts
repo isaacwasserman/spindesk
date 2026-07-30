@@ -12,14 +12,39 @@ import { serviceDeskSchema } from "./schema.js";
 import type { AuthLike, ServiceDeskConfig } from "./types.js";
 
 export { IMPERSONATION_HEADER } from "./auth-middleware.js";
-export type { Role } from "./types.js";
-export type { Ticket, TicketMetadata } from "./endpoints.js";
+export { DEFAULT_MAX_ATTACHMENT_BYTES, TICKET_STATUS } from "./types.js";
+export type {
+	AuthLike,
+	AuthUser,
+	Role,
+	ServiceDeskConfig,
+	ServiceDeskIdentity,
+	TicketStatus,
+} from "./types.js";
+export type {
+	Attachment,
+	Comment,
+	PresignedUpload,
+	Ticket,
+	TicketMetadata,
+} from "./endpoints.js";
+export type { ServiceDeskSchema } from "./schema.js";
 export type {
 	Actor,
 	OnActivity,
 	SpindeskActivity,
 	SpindeskActivityType,
 } from "./activity.js";
+
+/**
+ * The files-sdk surface a host needs to inspect a storage failure, so catching
+ * one doesn't require depending on files-sdk. Backing attachments with anything
+ * other than the built-in database store does: install `files-sdk` and pass one
+ * of its adapters (e.g. `s3({ bucket })` from `files-sdk/s3`) as
+ * `storage.provider`, typed by futonic's re-exported `FutonicStorageAdapter`.
+ */
+export { FilesError } from "files-sdk";
+export type { FilesErrorCode, SignedUpload, StoredFile } from "files-sdk";
 
 // Re-export the type surface consumers must name (via `@spindesk/core`) to stay
 // portable under plain `tsc` — no bundling, no peer deps. `better-call` is
@@ -51,7 +76,7 @@ export const spindeskServiceDefinition = defineService({
 	id: "spindesk",
 	dbSchema: serviceDeskSchema,
 	configSchema,
-	storage: {},
+	storage: { enabled: true },
 	endpoints: (defineEndpoint) => createSpindeskEndpoints(defineEndpoint),
 });
 
