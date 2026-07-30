@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS spindesk_attachments (
   content_type TEXT NOT NULL,
   size INTEGER NOT NULL,
   uploaded_by TEXT NOT NULL,
+  status TEXT NOT NULL, -- "pending" until the presigned upload is confirmed, then "ready"
   created_at TEXT NOT NULL,
   FOREIGN KEY (ticket_id) REFERENCES spindesk_tickets(id) ON DELETE CASCADE
 );

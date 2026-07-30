@@ -69,6 +69,10 @@ export const serviceDeskSchema = {
 				contentType: { type: "string" },
 				size: { type: "integer" },
 				uploadedBy: { type: "string" },
+				// "pending" from the moment an upload is presigned until the
+				// client confirms it landed, then "ready". Only ready
+				// attachments are listed and served.
+				status: { type: "string" },
 				createdAt: { type: "string" },
 			},
 		},

@@ -1,3 +1,4 @@
+import { sendPresignedUpload } from "@spindesk/core/client";
 import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./index.css";
@@ -349,7 +350,7 @@ function TicketList({
 	);
 }
 
-/** Attachment list + streamed upload/download/delete for a ticket. */
+/** Attachment list + presigned upload/download/delete for a ticket. */
 function Attachments({
 	ticketId,
 	canModify,
@@ -378,16 +379,22 @@ function Attachments({
 		const file = e.target.files?.[0];
 		e.target.value = ""; // allow re-selecting the same file
 		if (!file) return;
+		const contentType = file.type || "application/octet-stream";
 		setBusy(true);
 		run(async () => {
-			await client("@post/tickets/:id/attachments", {
-				params: { id: ticketId },
-				// biome-ignore lint/suspicious/noExplicitAny: raw streamed body (endpoint sets `disableBody`)
-				body: file as any,
-				headers: {
-					"x-filename": file.name,
-					"content-type": file.type || "application/octet-stream",
+			const { attachmentId, upload } = await client(
+				"@post/tickets/:id/attachments",
+				{
+					params: { id: ticketId },
+					body: { filename: file.name, contentType, size: file.size },
 				},
+			);
+			await sendPresignedUpload(upload, file, {
+				contentType,
+				filename: file.name,
+			});
+			await client("@post/tickets/:id/attachments/:attId/complete", {
+				params: { id: ticketId, attId: attachmentId },
 			});
 			await load();
 		}).finally(() => setBusy(false));

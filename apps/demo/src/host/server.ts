@@ -81,6 +81,8 @@ export interface CreateAppOptions {
 	metadataSchema?: TicketMetadataSchema;
 	/** Mount path for the service router. */
 	mount?: string;
+	/** HMAC key signing the built-in blob store's presigned URLs. */
+	storageSigningKey?: string;
 	/** Host hook invoked for every ticketing activity. */
 	onActivity?: OnActivity;
 }
@@ -104,6 +106,7 @@ export async function createApp(opts: CreateAppOptions = {}): Promise<App> {
 		metadataSchema,
 		mount = "/api/servicedesk",
 		onActivity,
+		storageSigningKey = process.env.STORAGE_SIGNING_KEY ?? "dev-storage-key",
 	} = opts;
 
 	const inner = new Database(dbPath);
@@ -136,6 +139,11 @@ export async function createApp(opts: CreateAppOptions = {}): Promise<App> {
 			metadataSchema,
 			onActivity,
 		},
+		// Attachments are uploaded and downloaded through presigned URLs. The
+		// built-in DB-backed adapter can't sign them itself, so futonic signs
+		// against a transfer route it mounts — and refuses to construct the service
+		// without a key and the URL that route is reachable at.
+		storage: { signingKey: storageSigningKey, baseUrl: `${baseURL}${mount}` },
 	});
 	const handler = service.createHandler({
 		basePath: mount,
