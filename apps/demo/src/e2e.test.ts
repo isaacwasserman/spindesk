@@ -1221,6 +1221,31 @@ describe("activity log + onActivity hook", () => {
 	});
 });
 
+describe("concurrent user provisioning", () => {
+	test("parallel requests for the same new user do not crash on duplicate key", async () => {
+		const f = await setup();
+		const FRESH_ID = "concurrent-user";
+		// biome-ignore lint/suspicious/noExplicitAny: test helpers are dynamic
+		const t = (await (f.app.auth as any).$context).test;
+		const saved = await t.saveUser(
+			t.createUser({ id: FRESH_ID, email: "concurrent@example.com", name: "concurrent@example.com" }),
+		);
+		const headers = await t.getAuthHeaders({ userId: saved.id });
+
+		const results = await Promise.all(
+			Array.from({ length: 10 }, () =>
+				call(f.app, `${MOUNT}/me`, headers),
+			),
+		);
+		for (const res of results) {
+			expect(res.status).toBe(200);
+			const body = await res.json() as { id: string; role: string };
+			expect(body.id).toBe(FRESH_ID);
+			expect(body.role).toBe("user");
+		}
+	});
+});
+
 describe("activity persistence without a hook", () => {
 	test("activities are persisted even when no onActivity is configured", async () => {
 		const f = await setup();
