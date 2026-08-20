@@ -63,21 +63,33 @@ async function provisionIdentity(
 		? await config.userIsAgent({ id: userId, email })
 		: false;
 
-	const row = await svc.db
+	let row = await svc.db
 		.selectFrom("users")
 		.selectAll()
 		.where("id", "=", userId)
 		.executeTakeFirst();
 	if (!row) {
-		await svc.db
+		const result = await svc.db
 			.insertInto("users")
 			.values({
 				id: userId,
 				role: isConfiguredAgent ? "agent" : "user",
 				createdAt: new Date().toISOString(),
 			})
-			.execute();
-		return { userId, role: isConfiguredAgent ? "agent" : "user" };
+			.onConflict((oc) => oc.column("id").doNothing())
+			.executeTakeFirst();
+		if (result.numInsertedOrUpdatedRows === 0n) {
+			row = await svc.db
+				.selectFrom("users")
+				.selectAll()
+				.where("id", "=", userId)
+				.executeTakeFirst();
+			if (!row) {
+				throw new Error(`User ${userId} vanished during provisioning`);
+			}
+		} else {
+			return { userId, role: isConfiguredAgent ? "agent" : "user" };
+		}
 	}
 	if (row.role === "user" && isConfiguredAgent) {
 		await svc.db
